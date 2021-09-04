@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/mayfield-z/ember/internal/pkg/context"
+	"github.com/mayfield-z/ember/internal/pkg/gnb"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/ue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/sirupsen/logrus"
 	"net"
@@ -10,7 +11,7 @@ import (
 )
 
 func main() {
-	gnb := context.NewGNB(
+	gnb := gnb.NewGNB(
 		"test-gnb",
 		1,
 		"208",
@@ -30,7 +31,7 @@ func main() {
 		logger.NgapLog.Errorf("error: %+v", err)
 	}
 
-	ue := context.NewUE(
+	ue := ue.NewUE(
 		"imsi-208930000000105",
 		"208",
 		"93",
@@ -38,9 +39,9 @@ func main() {
 		"8e27b6af0e692e750f32667a3b14605d",
 		"OPC",
 		"8000",
-		[]context.PDU{
+		[]ue.PDU{
 			{
-				IpType: context.IPv4,
+				IpType: ue.IPv4,
 				Apn:    "internet",
 				Nssai: utils.SNSSAI{
 					Sst: 0x01,
@@ -50,17 +51,8 @@ func main() {
 		},
 	)
 
+	ue.Run()
 	time.Sleep(2 * time.Second)
-	logger.AppLog.Infof("Add UE")
-	err = gnb.AddUE(ue)
-	if err != nil {
-		logger.AppLog.Errorf("AddUE 也能错？: %+v", err)
-	}
-
-	_, err = gnb.InitialUE(ue)
-	if err != nil {
-		logger.AppLog.Errorf("InitialUE failed: %+v", err)
-	}
-
+	ue.RRCSetupRequest(gnb)
 	select {}
 }

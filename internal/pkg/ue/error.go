@@ -1,6 +1,8 @@
-package context
+package ue
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type UERegisterError struct {
 	UeSUPI  string
@@ -14,6 +16,6 @@ func (e UERegisterError) Error() string {
 func (u *UE) UeRegisterError() error {
 	return UERegisterError{
 		UeSUPI:  u.supi,
-		GNBName: u.connectedGnb.name,
+		GNBName: u.gnb.Name,
 	}
 }

@@ -1,22 +1,92 @@
-package context
+package gnb
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"github.com/free5gc/ngap"
 	"github.com/free5gc/ngap/ngapType"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"io"
 	"syscall"
 )
 
-func (g *GNB) connectionHandler(bufsize uint32, ctx context.Context) {
+func (g *GNB) messageHandler() {
+	for {
+		select {
+		case <-g.ctx.Done():
+			return
+		default:
+			c := g.getMessageChan()
+			select {
+			case msg := <-c:
+				switch msg.(type) {
+				case mqueue.RRCSetupRequestMessage:
+					g.handleRRCSetupRequestMessage(msg)
+				case mqueue.RRCSetupCompleteMessage:
+					g.handleRRCSetupCompleteMessage(msg)
+				default:
+					logger.GnbLog.Errorf("Type %T message not supported by gnb", msg)
+				}
+			}
+		}
+	}
+}
+
+func (g *GNB) handleRRCSetupRequestMessage(msg interface{}) {
+	rRCSetupRequestMessage := msg.(mqueue.RRCSetupRequestMessage)
+	supi := rRCSetupRequestMessage.SendBy
+	if _, ok := g.ueMapBySupi[supi]; ok {
+		g.sendRRCRejectMessage(supi)
+		logger.GnbLog.Errorf("UE %v has already in gnb", supi)
+	} else {
+		ue := &GNBUE{
+			supi: supi,
+		}
+		g.ueMapBySupi[supi] = ue
+		g.sendRRCSetupMessage(supi)
+	}
+	return
+}
+
+func (g *GNB) handleRRCSetupCompleteMessage(msg interface{}) {
+	rRCSetupCompleteMessage := msg.(mqueue.RRCSetupCompleteMessage)
+	ue := g.FindUEBySUPI(rRCSetupCompleteMessage.SendBy)
+	if ue == nil {
+		logger.GnbLog.Errorf("UE %v not in gnb but got RRCSetupCompelte", rRCSetupCompleteMessage.SendBy)
+		return
+	}
+	ue.lastNas = rRCSetupCompleteMessage.NASRegistrationRequest
+	ue.plmn = rRCSetupCompleteMessage.PLMN
+	id := g.allocateRANUENGAPID()
+	if id == int64(-1) {
+		logger.GnbLog.Errorf("RANUENGAPID full")
+		return
+	}
+	g.supiMapByRANUENGAPID[id] = rRCSetupCompleteMessage.SendBy
+	err := g.sendInitialUEMessage(id, ue.lastNas)
+	if err != nil {
+		logger.GnbLog.Errorf("Initial UE Message send failed %+v", err)
+		return
+	}
+}
+
+func (g *GNB) sendRRCSetupMessage(supi string) {
+	mqueue.SendMessage(mqueue.RRCSetupMessage{}, supi)
+}
+
+func (g *GNB) sendRRCRejectMessage(supi string) {
+	mqueue.SendMessage(mqueue.RRCRejectMessage{}, supi)
+}
+
+// handle packages
+
+func (g *GNB) connectionHandler(bufsize uint32) {
 	conn := g.sctpConn
 	for {
 		select {
-		case <-ctx.Done():
+		case <-g.ctx.Done():
 			return
 		default:
 			buf := make([]byte, bufsize)

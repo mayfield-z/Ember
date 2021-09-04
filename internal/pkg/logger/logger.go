@@ -14,6 +14,8 @@ var (
 	ContextLog *logrus.Entry
 	NgapLog    *logrus.Entry
 	SctpLog    *logrus.Entry
+	GnbLog     *logrus.Entry
+	UeLog      *logrus.Entry
 )
 
 func init() {
@@ -34,6 +36,8 @@ func init() {
 	ContextLog = log.WithFields(logrus.Fields{"category": "Context"})
 	NgapLog = log.WithFields(logrus.Fields{"category": "Ngap"})
 	SctpLog = log.WithFields(logrus.Fields{"category": "Sctp"})
+	GnbLog = log.WithFields(logrus.Fields{"category": "Gnb"})
+	UeLog = log.WithFields(logrus.Fields{"category": "Ue"})
 }
 
 func SetLogLevel(level logrus.Level) {

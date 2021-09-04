@@ -1,10 +1,15 @@
-package context
+package ue
 
 import (
+	"context"
+	"fmt"
+	"github.com/free5gc/ngap/ngapType"
 	"github.com/looplab/fsm"
+	"github.com/mayfield-z/ember/internal/pkg/gnb"
+	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/timer"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -16,7 +21,8 @@ const (
 	stateCMIdle         = "CM-IDLE"
 	stateCMConnceted    = "CM-CONNECTED"
 
-	eventRRCConnect                 = "RRC-CONNECT-EVENT"
+	eventRRCSetup                   = "RRC-SETUP-EVENT"
+	eventRRCConnectionRelease       = "RRC-CONNECTION-RELEASE-EVENT"
 	eventRMRegistrationAccept       = "RM-REGISTRATION-ACCEPT-EVENT"
 	eventRMRegistrationReject       = "RM-REGISTRATION-REJECT-EVENT"
 	eventRMDeregistration           = "RM-DEREGISTRATION-EVENT"
@@ -54,10 +60,17 @@ type UE struct {
 	T3584 *timer.Timer
 	T3585 *timer.Timer
 
-	connectedGnb *GNB
+	ctx     context.Context
+	cancel  context.CancelFunc
+	running bool
+	gnb     UEGNB
 }
 
 func NewUE(supi string, mcc, mnc string, key, op, opType, amf string, pduSessions []PDU) *UE {
+	// TODO: check dup
+	mqueue.NewQueue(supi)
+	// TODO: change context
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	return &UE{
 		supi: supi,
 		plmn: utils.PLMN{
@@ -72,7 +85,8 @@ func NewUE(supi string, mcc, mnc string, key, op, opType, amf string, pduSession
 		rrcFSM: fsm.NewFSM(
 			stateRRCIdle,
 			fsm.Events{
-				{Name: eventRRCConnect, Src: []string{stateRRCIdle}, Dst: stateRRCConnected},
+				{Name: eventRRCSetup, Src: []string{stateRRCIdle}, Dst: stateRRCConnected},
+				{Name: eventRRCConnectionRelease, Src: []string{stateRRCConnected, stateRRCIdle}, Dst: stateRRCIdle},
 			},
 			nil,
 		),
@@ -91,30 +105,40 @@ func NewUE(supi string, mcc, mnc string, key, op, opType, amf string, pduSession
 			nil,
 			nil,
 		),
+		ctx:    ctx,
+		cancel: cancelFunc,
 	}
+}
+
+func (u *UE) NodeName() string {
+	return fmt.Sprintf("ue-%v", u.supi)
 }
 
 func (u *UE) SUPI() string {
 	return u.supi
 }
 
-func (u *UE) rRCSetup(gnb *GNB) {
-	if gnb.running {
-		u.rrcFSM.Event(eventRRCConnect)
-		u.connectedGnb = gnb
-	}
+func (u *UE) getMessageChan() chan interface{} {
+	return mqueue.GetMessageChan(u.supi)
 }
 
-func (u *UE) Register() error {
-	gnb := u.connectedGnb
-	if !gnb.Connected() {
-		return errors.WithMessage(u.UeRegisterError(), "gnb not connected to amf")
+func (u *UE) Run() {
+	go u.messageHandler()
+	u.running = true
+}
+
+func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
+	if !u.running {
+		logger.UeLog.Errorf("UE %v not start but want rrc setup", u.supi)
 	}
-	_, err := gnb.InitialUE(u)
-	if err != nil {
-		return errors.WithMessage(err, "")
+	if gnb.Running() {
+		msg := mqueue.RRCSetupRequestMessage{
+			EstablishmentCause: ngapType.RRCEstablishmentCausePresentMoSignalling,
+			SendBy:             u.supi,
+		}
+		mqueue.SendMessage(msg, gnb.NodeName())
+		u.gnb = UEGNB{Name: gnb.NodeName()}
 	}
-	return nil
 }
 
 type IpVersion int
@@ -129,4 +153,8 @@ type PDU struct {
 	IpType IpVersion
 	Apn    string
 	Nssai  utils.SNSSAI
+}
+
+type UEGNB struct {
+	Name string
 }

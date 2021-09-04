@@ -1,4 +1,4 @@
-package context
+package gnb
 
 import (
 	"git.cs.nctu.edu.tw/calee/sctp"
@@ -171,9 +171,8 @@ func (g *GNB) BuildNGSetupRequest() ([]byte, error) {
 	return ngap.Encoder(pdu)
 }
 
-func (g *GNB) BuildInitialUEMessage(id int64) ([]byte, error) {
+func (g *GNB) BuildInitialUEMessage(id int64, nas []byte) ([]byte, error) {
 	ue := g.FindUEByRANUENGAPID(id)
-
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
 	pdu.InitiatingMessage = new(ngapType.InitiatingMessage)
@@ -206,11 +205,7 @@ func (g *GNB) BuildInitialUEMessage(id int64) ([]byte, error) {
 	ie.Value.Present = ngapType.InitialUEMessageIEsPresentNASPDU
 	ie.Value.NASPDU = new(ngapType.NASPDU)
 
-	naspdu, err := ue.BuildRegistrationRequest()
-	if err != nil {
-		return nil, errors.WithMessage(err, "Nas RegistrationRequest build failed.")
-	}
-	ie.Value.NASPDU.Value = naspdu
+	ie.Value.NASPDU.Value = nas
 
 	initialUEMessageIEs.List = append(initialUEMessageIEs.List, ie)
 

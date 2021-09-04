@@ -1,9 +1,9 @@
-package context
+package gnb
 
 import (
 	"context"
 	"git.cs.nctu.edu.tw/calee/sctp"
-	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"net"
@@ -28,7 +28,7 @@ type GNB struct {
 	snssai          utils.SNSSAI
 
 	// auto
-	ueMapBySupi          map[string]*UE
+	ueMapBySupi          map[string]*GNBUE
 	supiMapByRANUENGAPID map[int64]string
 	rANUENGAPIDPointer   int64
 	running              bool
@@ -39,6 +39,10 @@ type GNB struct {
 }
 
 func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, amfAddress net.IP, amfPort int, sst uint8, sd uint32) *GNB {
+	//TODO: check if same name gnb exists
+	mqueue.NewQueue(name)
+	//TODO: change context
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	return &GNB{
 		name:            name,
 		globalRANNodeID: globalRANNodeID,
@@ -55,14 +59,16 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 			Sst: sst,
 			Sd:  sd,
 		},
-		ueMapBySupi:          make(map[string]*UE),
+		ueMapBySupi:          make(map[string]*GNBUE),
 		supiMapByRANUENGAPID: make(map[int64]string),
 		running:              false,
 		sctpConn:             nil,
+		ctx:                  ctx,
+		cancelFunc:           cancelFunc,
 	}
 }
 
-func (g *GNB) Name() string {
+func (g *GNB) NodeName() string {
 	return g.name
 }
 
@@ -74,24 +80,18 @@ func (g *GNB) Connected() bool {
 	return g.gnbAmf.Connected
 }
 
-func (g *GNB) AddUE(ue *UE) error {
-	if _, ok := g.ueMapBySupi[ue.SUPI()]; ok {
-		return errors.New("ue has already in gnb")
-	} else {
-		g.ueMapBySupi[ue.SUPI()] = ue
-		ue.rRCSetup(g)
-	}
-	return nil
+func (g *GNB) getMessageChan() chan interface{} {
+	return mqueue.GetMessageChan(g.name)
 }
 
-func (g *GNB) FindUEBySUPI(supi string) *UE {
+func (g *GNB) FindUEBySUPI(supi string) *GNBUE {
 	if ue, ok := g.ueMapBySupi[supi]; ok {
 		return ue
 	}
 	return nil
 }
 
-func (g GNB) FindUEByRANUENGAPID(id int64) *UE {
+func (g GNB) FindUEByRANUENGAPID(id int64) *GNBUE {
 	if supi, ok := g.supiMapByRANUENGAPID[id]; ok {
 		if ue, ok := g.ueMapBySupi[supi]; ok {
 			return ue
@@ -102,7 +102,6 @@ func (g GNB) FindUEByRANUENGAPID(id int64) *UE {
 
 func (g *GNB) Run() error {
 	g.running = true
-	g.ctx, g.cancelFunc = context.WithCancel(context.Background())
 	conn, err := Dial(g.amfAddress, g.amfPort)
 	if err != nil {
 		return errors.Wrapf(err, "Failed to dial sctp address %v:%v", g.amfAddress, g.amfPort)
@@ -112,7 +111,8 @@ func (g *GNB) Run() error {
 	if err != nil {
 		return errors.Wrapf(err, "Send NGSetupRequestPDU error.")
 	}
-	go g.connectionHandler(readBufSize, g.ctx)
+	go g.connectionHandler(readBufSize)
+	go g.messageHandler()
 	return nil
 }
 
@@ -143,8 +143,7 @@ func (g *GNB) sendNGSetupRequestPDU() error {
 	return nil
 }
 
-func (g *GNB) InitialUE(ue *UE) (int64, error) {
-	logger.AppLog.Traceln("Start initial ue")
+func (g *GNB) allocateRANUENGAPID() int64 {
 	rANUENGAPID := int64(-1)
 	for i := g.rANUENGAPIDPointer; i < rANUENGAPIDMax; i++ {
 		if g.FindUEByRANUENGAPID(i) == nil {
@@ -162,17 +161,11 @@ func (g *GNB) InitialUE(ue *UE) (int64, error) {
 			}
 		}
 	}
-
-	g.supiMapByRANUENGAPID[rANUENGAPID] = ue.supi
-	err := g.sendInitialUEMessage(rANUENGAPID)
-	if err != nil {
-		return -1, err
-	}
-	return rANUENGAPID, nil
+	return rANUENGAPID
 }
 
-func (g *GNB) sendInitialUEMessage(id int64) error {
-	initialUEMessage, err := g.BuildInitialUEMessage(id)
+func (g *GNB) sendInitialUEMessage(id int64, nas []byte) error {
+	initialUEMessage, err := g.BuildInitialUEMessage(id, nas)
 	if err != nil {
 		return errors.WithMessagef(err, "InitialUEMessage PDU build failed.")
 	}
@@ -181,6 +174,11 @@ func (g *GNB) sendInitialUEMessage(id int64) error {
 		return errors.WithMessagef(err, "InitialUEMessage Send failed.")
 	}
 
-	//TODO:CM-STATE CHANGE
 	return nil
+}
+
+type GNBUE struct {
+	supi    string
+	plmn    utils.PLMN
+	lastNas []byte
 }

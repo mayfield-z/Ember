@@ -1,4 +1,4 @@
-package context
+package ue
 
 import (
 	"github.com/free5gc/nas"
@@ -7,7 +7,7 @@ import (
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 )
 
-func (u *UE) BuildRegistrationRequest() ([]byte, error) {
+func (u *UE) buildRegistrationRequest() ([]byte, error) {
 	m := nas.NewMessage()
 	m.GmmMessage = nas.NewGmmMessage()
 	m.GmmMessage.SetMessageType(nas.MsgTypeRegistrationRequest)
