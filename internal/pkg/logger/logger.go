@@ -7,15 +7,17 @@ import (
 )
 
 var (
-	log        *logrus.Logger
-	AppLog     *logrus.Entry
-	InitLog    *logrus.Entry
-	CfgLog     *logrus.Entry
-	ContextLog *logrus.Entry
-	NgapLog    *logrus.Entry
-	SctpLog    *logrus.Entry
-	GnbLog     *logrus.Entry
-	UeLog      *logrus.Entry
+	log           *logrus.Logger
+	AppLog        *logrus.Entry
+	InitLog       *logrus.Entry
+	CfgLog        *logrus.Entry
+	ContextLog    *logrus.Entry
+	NgapLog       *logrus.Entry
+	SctpLog       *logrus.Entry
+	GnbLog        *logrus.Entry
+	UeLog         *logrus.Entry
+	ControllerLog *logrus.Entry
+	QueueLog      *logrus.Entry
 )
 
 func init() {
@@ -27,7 +29,7 @@ func init() {
 		TrimMessages:    true,
 		NoFieldsSpace:   true,
 		HideKeys:        true,
-		FieldsOrder:     []string{"category"},
+		FieldsOrder:     []string{"category", "name"},
 	}
 
 	AppLog = log.WithFields(logrus.Fields{"category": "App"})
@@ -38,6 +40,8 @@ func init() {
 	SctpLog = log.WithFields(logrus.Fields{"category": "Sctp"})
 	GnbLog = log.WithFields(logrus.Fields{"category": "Gnb"})
 	UeLog = log.WithFields(logrus.Fields{"category": "Ue"})
+	ControllerLog = log.WithFields(logrus.Fields{"category": "Controller"})
+	QueueLog = log.WithFields(logrus.Fields{"category": "Queue"})
 }
 
 func SetLogLevel(level logrus.Level) {

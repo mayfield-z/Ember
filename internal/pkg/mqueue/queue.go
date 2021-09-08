@@ -1,8 +1,11 @@
 package mqueue
 
-import "sync"
+import (
+	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"sync"
+)
 
-var QueueMap sync.Map // map[string]*Queue
+var queueMap sync.Map // map[string]*Queue
 
 type Queue struct {
 	Name    string
@@ -14,12 +17,19 @@ func NewQueue(name string) *Queue {
 		Name:    name,
 		Message: make(chan interface{}),
 	}
-	QueueMap.Store(name, q)
+	queueMap.Store(name, q)
+	logger.QueueLog.Debugf("Add new queue: %v", name)
 	return q
 }
 
+func DelQueue(name string) {
+	// TODO: make sure all message is handled.
+	queueMap.Delete(name)
+	logger.QueueLog.Debugf("Del queue: %v", name)
+}
+
 func GetQueueByName(name string) *Queue {
-	if q, ok := QueueMap.Load(name); ok {
+	if q, ok := queueMap.Load(name); ok {
 		return q.(*Queue)
 	} else {
 		return nil
@@ -27,6 +37,7 @@ func GetQueueByName(name string) *Queue {
 }
 
 func SendMessage(message interface{}, nodeName string) {
+	logger.QueueLog.Debugf("sending message %T to node \"%v\"", message, nodeName)
 	queue := GetQueueByName(nodeName)
 	queue.Message <- message
 }

@@ -47,5 +47,5 @@ func (u *UE) sendRRCSetupComplete(name string) {
 		SendBy:                 u.supi,
 		PLMN:                   u.plmn,
 	}
-	mqueue.SendMessage(msg, u.gnb.Name)
+	mqueue.SendMessage(msg, name)
 }

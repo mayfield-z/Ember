@@ -10,6 +10,7 @@ import (
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/timer"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -37,6 +38,8 @@ type UE struct {
 	opType      string
 	amf         string
 	pduSessions []PDU
+	ulDataRate  string
+	dlDataRate  string
 	//sm
 	rrcFSM *fsm.FSM
 	rmFSM  *fsm.FSM
@@ -66,11 +69,11 @@ type UE struct {
 	gnb     UEGNB
 }
 
-func NewUE(supi string, mcc, mnc string, key, op, opType, amf string, pduSessions []PDU) *UE {
+func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []PDU, parent context.Context) *UE {
 	// TODO: check dup
 	mqueue.NewQueue(supi)
 	// TODO: change context
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	ctx, cancelFunc := context.WithCancel(parent)
 	return &UE{
 		supi: supi,
 		plmn: utils.PLMN{
@@ -81,6 +84,8 @@ func NewUE(supi string, mcc, mnc string, key, op, opType, amf string, pduSession
 		op:          op,
 		opType:      opType,
 		amf:         amf,
+		ulDataRate:  ulDataRate,
+		dlDataRate:  dlDataRate,
 		pduSessions: pduSessions,
 		rrcFSM: fsm.NewFSM(
 			stateRRCIdle,
@@ -118,6 +123,19 @@ func (u *UE) SUPI() string {
 	return u.supi
 }
 
+func (u *UE) SetSUPI(supi string) {
+	mqueue.DelQueue(u.supi)
+	u.supi = supi
+	mqueue.NewQueue(supi)
+}
+
+func (u *UE) Copy(supi string) *UE {
+	ue := *u
+	ue.supi = supi
+	mqueue.NewQueue(supi)
+	return &ue
+}
+
 func (u *UE) getMessageChan() chan interface{} {
 	return mqueue.GetMessageChan(u.supi)
 }
@@ -132,12 +150,13 @@ func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
 		logger.UeLog.Errorf("UE %v not start but want rrc setup", u.supi)
 	}
 	if gnb.Running() {
+		// for concurrent safety, don't change exec order
+		u.gnb = UEGNB{Name: gnb.NodeName()}
 		msg := mqueue.RRCSetupRequestMessage{
 			EstablishmentCause: ngapType.RRCEstablishmentCausePresentMoSignalling,
 			SendBy:             u.supi,
 		}
 		mqueue.SendMessage(msg, gnb.NodeName())
-		u.gnb = UEGNB{Name: gnb.NodeName()}
 	}
 }
 
@@ -148,6 +167,17 @@ const (
 	IPv6
 	IPv4_AND_IPv6
 )
+
+func ParseIpVersion(str string) (IpVersion, error) {
+	if str == "IPv4" {
+		return IPv4, nil
+	} else if str == "IPv6" {
+		return IPv6, nil
+	} else if str == "IPv4AndIPv6" {
+		return IPv4_AND_IPv6, nil
+	}
+	return IPv4, errors.New(fmt.Sprintf("IpVersion \"%v\" can not parsed", str))
+}
 
 type PDU struct {
 	IpType IpVersion

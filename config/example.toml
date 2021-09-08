@@ -1,0 +1,52 @@
+title = "Example Config"
+
+[app]
+# error, debug, warn, info, trace
+logLevel = "debug"
+
+[controller]
+
+n2IpFrom = "10.100.0.1"
+n2IpTo = "10.100.0.1"
+ueNum = 1
+uePerGnb = 1
+uePerSec = 10
+initPDUWhenAllUERegistered = false
+
+[gnb]
+name = "test-gnb"
+mcc = "208"
+mnc = "93"
+tac = 1
+idLength = 32
+sst = 0x01
+sd = 0x010203
+
+[ue]
+# only support imsi now
+supiType = "imsi"
+supiFrom = "imsi-208930000000100"
+supiTo = "imsi-208930000010100"
+mcc = "208"
+mnc = "93"
+key = "8baf473f2f8fd09487cccbd7097c6862"
+op = "8e27b6af0e692e750f32667a3b14605d"
+opType = "OPC"
+amf = "8000"
+
+    [ue.dataRate]
+    uplink = "full"
+    downlink = "full"
+
+    [ue.sessions]
+        [ue.sessions.0]
+        # IPv4, IPv6, IPv4AndIPv6
+        type = "IPv4"
+        apn = "internet"
+        sst = 0x01
+        sd = 0x010203
+
+
+[amf]
+ip = "10.100.0.11"
+port = 38412

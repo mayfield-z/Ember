@@ -38,11 +38,11 @@ type GNB struct {
 	cancelFunc           context.CancelFunc
 }
 
-func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, amfAddress net.IP, amfPort int, sst uint8, sd uint32) *GNB {
+func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, amfAddress net.IP, amfPort int, sst uint8, sd uint32, parent context.Context) *GNB {
 	//TODO: check if same name gnb exists
 	mqueue.NewQueue(name)
 	//TODO: change context
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	ctx, cancelFunc := context.WithCancel(parent)
 	return &GNB{
 		name:            name,
 		globalRANNodeID: globalRANNodeID,
@@ -78,6 +78,35 @@ func (g *GNB) Running() bool {
 
 func (g *GNB) Connected() bool {
 	return g.gnbAmf.Connected
+}
+
+func (g *GNB) SetName(name string) *GNB {
+	mqueue.DelQueue(g.name)
+	g.name = name
+	mqueue.NewQueue(g.name)
+	return g
+}
+
+func (g *GNB) Copy(name string) *GNB {
+	gnb := *g
+	gnb.name = name
+	mqueue.NewQueue(name)
+	return &gnb
+}
+
+func (g *GNB) SetGlobalRANNodeID(id uint32) *GNB {
+	g.globalRANNodeID = id
+	return g
+}
+
+func (g *GNB) SetNRCellIdentity(nci uint64) *GNB {
+	g.nci = nci
+	return g
+}
+
+func (g *GNB) SetAMFAddress(ip net.IP) *GNB {
+	g.amfAddress = ip
+	return g
 }
 
 func (g *GNB) getMessageChan() chan interface{} {
