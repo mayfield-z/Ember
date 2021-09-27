@@ -1,9 +1,14 @@
 package timer
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+var timerPool = sync.Pool{
+	New: func() interface{} { return new(Timer) },
+}
 
 type Timer struct {
 	ticker        *time.Ticker
@@ -16,15 +21,14 @@ type Timer struct {
 }
 
 func NewTimer(d time.Duration, maxRetryTimes int32, expiredFunc func(expireTimes int32), cancelFunc func()) *Timer {
-	return &Timer{
-		ticker:        time.NewTicker(d),
-		expireTimes:   0,
-		maxRetryTimes: maxRetryTimes,
-		expiredFunc:   expiredFunc,
-		cancelFunc:    cancelFunc,
-		stopped:       false,
-		done:          make(chan bool, 1),
-	}
+	t := timerPool.Get().(*Timer)
+	t.maxRetryTimes = maxRetryTimes
+	t.expiredFunc = expiredFunc
+	t.cancelFunc = cancelFunc
+	t.done = make(chan bool, 1)
+	t.stopped = false
+	t.ticker = time.NewTicker(d)
+	return t
 }
 
 func (t *Timer) ExpireTimes() int32 {
@@ -36,9 +40,10 @@ func (t *Timer) MaxRetryTimes() int32 {
 }
 
 func (t *Timer) Stop() {
+	t.stopped = true
 	t.done <- true
 	close(t.done)
-	t.stopped = true
+	timerPool.Put(t)
 }
 
 func (t *Timer) Stopped() bool {

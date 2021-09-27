@@ -39,6 +39,10 @@ func GetQueueByName(name string) *Queue {
 func SendMessage(message interface{}, nodeName string) {
 	logger.QueueLog.Debugf("sending message %T to node \"%v\"", message, nodeName)
 	queue := GetQueueByName(nodeName)
+	if queue == nil {
+		logger.QueueLog.Errorf("cannot find queue %v", nodeName)
+		return
+	}
 	queue.Message <- message
 }
 

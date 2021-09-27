@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"github.com/mayfield-z/ember/internal/pkg/gnb"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/message"
+	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/ue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
@@ -34,9 +36,11 @@ type Controller struct {
 	n2IpNum                    uint32
 	supiFrom                   string
 	supiTo                     string
+	supiNum                    uint32
 	ueNum                      uint32
 	uePerGnb                   uint32
 	uePerSec                   float64
+	realMaxUe                  uint32
 	initPDUWhenAllUERegistered bool
 	amfIp                      net.IP
 	amfPort                    int
@@ -59,18 +63,21 @@ func ControllerSelf() *Controller {
 
 func (c *Controller) addGnb(gnb *gnb.GNB) {
 	c.mutex.Lock()
+	logger.ControllerLog.Debugf("Adding gNB %v", gnb.NodeName())
 	c.gnbList = append(c.gnbList, gnb)
 	c.mutex.Unlock()
 }
 
 func (c *Controller) addUE(ue *ue.UE) {
 	c.mutex.Lock()
+	logger.ControllerLog.Debugf("Adding UE: %v", ue.NodeName())
 	c.ueList = append(c.ueList, ue)
 	c.mutex.Unlock()
 }
 
 func (c *Controller) Init(configPath string) error {
 	// do not change exec order
+	logger.ControllerLog.Debugf("Start inital controller, config file path: %v", configPath)
 	c.ctx, c.cancelFunc = context.WithCancel(context.Background())
 	c.globalRANNodeIDPointer = 1
 	c.nrCellIdentityPointer = 1
@@ -108,6 +115,8 @@ func (c *Controller) parseConfig(configPath string) error {
 	c.supiFrom = viper.GetString("ue.supiFrom")
 	c.supiPointer = c.supiFrom
 	c.supiTo = viper.GetString("ue.supiTo")
+	c.supiNum = calcSUPINum(c.supiFrom, c.supiTo)
+	logger.ControllerLog.Infof("SUPI from: %v, to: %v, total: %v", c.supiFrom, c.supiTo, c.supiNum)
 
 	c.gnbName = viper.GetString("gnb.name")
 	n2IpFrom := net.ParseIP(viper.GetString("controller.n2IpFrom"))
@@ -122,9 +131,10 @@ func (c *Controller) parseConfig(configPath string) error {
 	c.ueNum = viper.GetUint32("controller.ueNum")
 	c.uePerSec = viper.GetFloat64("controller.uePerSec")
 	c.uePerGnb = viper.GetUint32("controller.uePerGnb")
+	c.realMaxUe = calcRealMaxUeNum(c.n2IpNum, c.uePerGnb, c.supiNum, c.ueNum)
 	c.initPDUWhenAllUERegistered = viper.GetBool("controller.initPDUWhenAllUERegistered")
-	logger.ControllerLog.Infof("Total UE num is: %v, register %v ue per second", c.ueNum, c.uePerSec)
-	logger.ControllerLog.Infof("%v UE per gNB, will use %v gnb", c.uePerGnb, math.Ceil(float64(c.ueNum)/float64(c.uePerGnb)))
+	logger.ControllerLog.Infof("Real UE max is: %v, register %v ue per second", c.realMaxUe, c.uePerSec)
+	logger.ControllerLog.Infof("%v UE per gNB, will use %v gnb", c.uePerGnb, math.Ceil(float64(c.realMaxUe)/float64(c.uePerGnb)))
 	if c.initPDUWhenAllUERegistered {
 		logger.ControllerLog.Infof("Will inital PDU when all UE registered in core")
 	} else {
@@ -149,7 +159,7 @@ func (c *Controller) parseConfig(configPath string) error {
 		c.ctx,
 	)
 
-	var pduSessions []ue.PDU
+	var pduSessions []utils.PDU
 	for i := 0; ; i++ {
 		pduConfig := viper.Sub(fmt.Sprintf("ue.sessions.%v", i))
 		if pduConfig == nil {
@@ -159,7 +169,7 @@ func (c *Controller) parseConfig(configPath string) error {
 		if err != nil {
 			return errors.WithMessagef(err, "parseConfig failed")
 		}
-		pdu := ue.PDU{
+		pdu := utils.PDU{
 			IpType: ipType,
 			Apn:    pduConfig.GetString("apn"),
 			Nssai: utils.SNSSAI{
@@ -184,6 +194,8 @@ func (c *Controller) parseConfig(configPath string) error {
 		c.ctx,
 	)
 
+	mqueue.DelQueue(c.templateGnb.NodeName())
+	mqueue.DelQueue(c.templateUE.NodeName())
 	return nil
 }
 
@@ -197,17 +209,19 @@ func (c *Controller) Start() {
 
 func (c *Controller) start() {
 	// TODO: UE init PDU
+	logger.ControllerLog.Infof("Controller start")
 	ueIntervalInMicrosecond := int64(math.Ceil(float64(1000000) / c.uePerSec))
 	ticker := time.NewTicker(time.Duration(ueIntervalInMicrosecond) * time.Microsecond)
 	defer ticker.Stop()
 	ueNumOfCurrentGnb := uint32(0)
 	gnbPointer := 0
 
-	for {
+	for uint32(len(c.ueList)) < c.realMaxUe {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
+			// create UE
 			if len(c.ueList) == int(c.ueNum) {
 				//	idle
 				return
@@ -220,6 +234,8 @@ func (c *Controller) start() {
 			} else {
 				ueNumOfCurrentGnb += 1
 			}
+
+			// create gNB
 			if len(c.gnbList) == gnbPointer {
 				if len(c.gnbList) == int(c.n2IpNum) {
 					// idle
@@ -231,14 +247,42 @@ func (c *Controller) start() {
 					logger.ControllerLog.Errorf("create gnb failed: %+v", err)
 					return
 				}
+				time.Sleep(time.Second)
 			}
 			currentGNB := c.gnbList[len(c.gnbList)-1]
+
+			// start RRCSetup
 			currentUE.RRCSetupRequest(currentGNB)
+			select {
+			case msg := <-currentUE.Notify:
+				switch msg.(type) {
+				case message.UERRCSetupSuccess:
+				case message.UERRCSetupReject:
+				}
+			}
+
+			// start registration
+
+			//select {
+			//case msg := <- currentUE.Notify:
+			//	switch msg.(type) {
+			//
+			//	}
+			//}
+			// start PDU session setup
+
+			//select {
+			//case msg := <- currentUE.Notify:
+			//	switch msg.(type) {
+			//
+			//	}
+			//}
 		}
 	}
 }
 
 func (c *Controller) createAndAddGnb() *gnb.GNB {
+	logger.ControllerLog.Infof("Creating gnb %v-%v", c.gnbName, len(c.gnbList))
 	gnb := c.templateGnb.Copy(fmt.Sprintf("%v-%v", c.gnbName, len(c.gnbList))).
 		SetGlobalRANNodeID(c.globalRANNodeIDPointer).
 		SetNRCellIdentity(c.nrCellIdentityPointer)
@@ -250,6 +294,7 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 }
 
 func (c *Controller) createAndAddUE() *ue.UE {
+	logger.ControllerLog.Infof("Creating UE: %v", c.supiPointer)
 	ue := c.templateUE.Copy(c.supiPointer)
 	imsi, err := strconv.ParseUint(strings.Split(c.supiPointer, "-")[1], 10, 64)
 	if err != nil {
@@ -300,4 +345,29 @@ func add1(i uint8) (res uint8, flag uint8) {
 		flag = 0
 	}
 	return
+}
+
+func calcRealMaxUeNum(n2IpNum, uePerGnb, supiNum uint32, ueNum uint32) uint32 {
+	t := n2IpNum * uePerGnb
+	return u32Max(u32Max(t, supiNum), ueNum)
+}
+
+func calcSUPINum(supiFrom string, supiTo string) uint32 {
+	imsiFrom, err := strconv.ParseUint(strings.Split(supiFrom, "-")[1], 16, 64)
+	if err != nil {
+		logger.ControllerLog.Errorf("SUPI parse failed: %+v", err)
+	}
+	imsiTo, err := strconv.ParseUint(strings.Split(supiTo, "-")[1], 16, 64)
+	if err != nil {
+		logger.ControllerLog.Errorf("SUPI parse failed: %+v", err)
+	}
+	return uint32(imsiTo - imsiFrom)
+}
+
+func u32Max(a, b uint32) uint32 {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
 }

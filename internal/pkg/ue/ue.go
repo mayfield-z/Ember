@@ -3,14 +3,17 @@ package ue
 import (
 	"context"
 	"fmt"
+	"github.com/free5gc/nas/security"
 	"github.com/free5gc/ngap/ngapType"
 	"github.com/looplab/fsm"
 	"github.com/mayfield-z/ember/internal/pkg/gnb"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/timer"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -37,7 +40,8 @@ type UE struct {
 	op          string
 	opType      string
 	amf         string
-	pduSessions []PDU
+	sqn         string
+	pduSessions []utils.PDU
 	ulDataRate  string
 	dlDataRate  string
 	//sm
@@ -45,34 +49,43 @@ type UE struct {
 	rmFSM  *fsm.FSM
 	cmFSM  *fsm.FSM
 	//timers
-	T3346 *timer.Timer
-	T3396 *timer.Timer
-	T3444 *timer.Timer
-	T3445 *timer.Timer
-	T3502 *timer.Timer
-	T3510 *timer.Timer
-	T3511 *timer.Timer
-	T3512 *timer.Timer
-	T3516 *timer.Timer
-	T3517 *timer.Timer
-	T3519 *timer.Timer
-	T3520 *timer.Timer
-	T3521 *timer.Timer
-	T3525 *timer.Timer
-	T3540 *timer.Timer
-	T3584 *timer.Timer
-	T3585 *timer.Timer
+	t3346 *timer.Timer
+	t3396 *timer.Timer
+	t3444 *timer.Timer
+	t3445 *timer.Timer
+	t3502 *timer.Timer
+	t3510 *timer.Timer
+	t3511 *timer.Timer
+	t3512 *timer.Timer
+	t3516 *timer.Timer
+	t3517 *timer.Timer
+	t3519 *timer.Timer
+	t3520 *timer.Timer
+	t3521 *timer.Timer
+	t3525 *timer.Timer
+	t3540 *timer.Timer
+	t3584 *timer.Timer
+	t3585 *timer.Timer
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	running bool
-	gnb     UEGNB
+	kamf         []uint8
+	cipheringAlg uint8
+	integrityAlg uint8
+	knasEnc      [16]uint8
+	knasInt      [16]uint8
+
+	snn       string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	running   bool
+	gnb       utils.UeGnb
+	Notify    chan interface{}
+	logger    *logrus.Entry
+	nasLogger *logrus.Entry
 }
 
-func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []PDU, parent context.Context) *UE {
+func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []utils.PDU, parent context.Context) *UE {
 	// TODO: check dup
 	mqueue.NewQueue(supi)
-	// TODO: change context
 	ctx, cancelFunc := context.WithCancel(parent)
 	return &UE{
 		supi: supi,
@@ -80,13 +93,17 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 			Mcc: mcc,
 			Mnc: mnc,
 		},
-		key:         key,
-		op:          op,
-		opType:      opType,
-		amf:         amf,
-		ulDataRate:  ulDataRate,
-		dlDataRate:  dlDataRate,
-		pduSessions: pduSessions,
+		key:          key,
+		op:           op,
+		opType:       opType,
+		amf:          amf,
+		sqn:          "0000000",
+		cipheringAlg: security.AlgCiphering128NEA0,
+		integrityAlg: security.AlgCiphering128NEA2,
+		snn:          deriveSNN(mnc, mcc),
+		ulDataRate:   ulDataRate,
+		dlDataRate:   dlDataRate,
+		pduSessions:  pduSessions,
 		rrcFSM: fsm.NewFSM(
 			stateRRCIdle,
 			fsm.Events{
@@ -110,8 +127,11 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 			nil,
 			nil,
 		),
-		ctx:    ctx,
-		cancel: cancelFunc,
+		ctx:       ctx,
+		cancel:    cancelFunc,
+		Notify:    make(chan interface{}, 1),
+		logger:    logger.UeLog.WithFields(logrus.Fields{"name": supi}),
+		nasLogger: logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"}),
 	}
 }
 
@@ -126,12 +146,17 @@ func (u *UE) SUPI() string {
 func (u *UE) SetSUPI(supi string) {
 	mqueue.DelQueue(u.supi)
 	u.supi = supi
+	u.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
+	u.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	mqueue.NewQueue(supi)
 }
 
 func (u *UE) Copy(supi string) *UE {
+	// TODO: check source ue state
 	ue := *u
 	ue.supi = supi
+	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
+	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	mqueue.NewQueue(supi)
 	return &ue
 }
@@ -141,18 +166,19 @@ func (u *UE) getMessageChan() chan interface{} {
 }
 
 func (u *UE) Run() {
+	u.logger.Debugf("UE run")
 	go u.messageHandler()
 	u.running = true
 }
 
 func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
 	if !u.running {
-		logger.UeLog.Errorf("UE %v not start but want rrc setup", u.supi)
+		u.logger.Errorf("UE %v not start but want rrc setup", u.supi)
 	}
 	if gnb.Running() {
 		// for concurrent safety, don't change exec order
-		u.gnb = UEGNB{Name: gnb.NodeName()}
-		msg := mqueue.RRCSetupRequestMessage{
+		u.gnb = utils.UeGnb{Name: gnb.NodeName()}
+		msg := message.RRCSetupRequest{
 			EstablishmentCause: ngapType.RRCEstablishmentCausePresentMoSignalling,
 			SendBy:             u.supi,
 		}
@@ -160,31 +186,24 @@ func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
 	}
 }
 
-type IpVersion int
-
-const (
-	IPv4 IpVersion = iota
-	IPv6
-	IPv4_AND_IPv6
-)
-
-func ParseIpVersion(str string) (IpVersion, error) {
-	if str == "IPv4" {
-		return IPv4, nil
-	} else if str == "IPv6" {
-		return IPv6, nil
-	} else if str == "IPv4AndIPv6" {
-		return IPv4_AND_IPv6, nil
+func deriveSNN(mnc, mcc string) string {
+	// 5G:mnc093.mcc208.3gppnetwork.org
+	var resu string
+	if len(mnc) == 2 {
+		resu = "5G:mnc0" + mnc + ".mcc" + mcc + ".3gppnetwork.org"
+	} else {
+		resu = "5G:mnc" + mnc + ".mcc" + mcc + ".3gppnetwork.org"
 	}
-	return IPv4, errors.New(fmt.Sprintf("IpVersion \"%v\" can not parsed", str))
-}
 
-type PDU struct {
-	IpType IpVersion
-	Apn    string
-	Nssai  utils.SNSSAI
+	return resu
 }
-
-type UEGNB struct {
-	Name string
+func ParseIpVersion(str string) (utils.IpVersion, error) {
+	if str == "IPv4" {
+		return utils.IPv4, nil
+	} else if str == "IPv6" {
+		return utils.IPv6, nil
+	} else if str == "IPv4AndIPv6" {
+		return utils.IPv4_AND_IPv6, nil
+	}
+	return utils.IPv4, errors.New(fmt.Sprintf("IpVersion \"%v\" can not parsed", str))
 }

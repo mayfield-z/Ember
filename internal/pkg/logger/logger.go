@@ -29,7 +29,7 @@ func init() {
 		TrimMessages:    true,
 		NoFieldsSpace:   true,
 		HideKeys:        true,
-		FieldsOrder:     []string{"category", "name"},
+		FieldsOrder:     []string{"category", "name", "part"},
 	}
 
 	AppLog = log.WithFields(logrus.Fields{"category": "App"})

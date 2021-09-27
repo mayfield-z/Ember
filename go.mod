@@ -2,20 +2,12 @@ module github.com/mayfield-z/ember
 
 go 1.17
 
-replace (
-	github.com/mayfield-z/ember/internal/pkg/gnb => ./internal/pkg/gnb
-	github.com/mayfield-z/ember/internal/pkg/logger => ./internal/pkg/logger
-	github.com/mayfield-z/ember/internal/pkg/mq => ./internal/pkg/rule_queue
-	github.com/mayfield-z/ember/internal/pkg/packet_driver => ./internal/pkg/packet_driver
-	github.com/mayfield-z/ember/internal/pkg/timer => ./internal/pkg/timer
-	github.com/mayfield-z/ember/internal/pkg/ue => ./internal/pkg/ue
-	github.com/mayfield-z/ember/internal/pkg/utils => ./internal/pkg/utils
-)
-
 require (
 	git.cs.nctu.edu.tw/calee/sctp v1.1.0
 	github.com/antonfisher/nested-logrus-formatter v1.3.0
+	github.com/free5gc/UeauCommon v1.0.0
 	github.com/free5gc/aper v1.0.1
+	github.com/free5gc/milenage v1.0.0
 	github.com/free5gc/nas v1.0.0
 	github.com/free5gc/ngap v1.0.2
 	github.com/google/gopacket v1.1.19
@@ -26,6 +18,7 @@ require (
 )
 
 require (
+	github.com/aead/cmac v0.0.0-20160719120800-7af84192f0b1 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/free5gc/logger_conf v1.0.0 // indirect
 	github.com/free5gc/logger_util v1.0.0 // indirect

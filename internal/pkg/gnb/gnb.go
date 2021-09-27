@@ -3,9 +3,11 @@ package gnb
 import (
 	"context"
 	"git.cs.nctu.edu.tw/calee/sctp"
+	"github.com/mayfield-z/ember/internal/pkg/logger"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"net"
 )
 
@@ -28,20 +30,21 @@ type GNB struct {
 	snssai          utils.SNSSAI
 
 	// auto
-	ueMapBySupi          map[string]*GNBUE
-	supiMapByRANUENGAPID map[int64]string
-	rANUENGAPIDPointer   int64
-	running              bool
-	gnbAmf               utils.GnbAmf
-	sctpConn             *sctp.SCTPConn
-	ctx                  context.Context
-	cancelFunc           context.CancelFunc
+	ueMapBySupi        map[string]*utils.GnbUe
+	ueMapByRANUENGAPID map[int64]*utils.GnbUe
+	rANUENGAPIDPointer int64
+	running            bool
+	gnbAmf             utils.GnbAmf
+	sctpConn           *sctp.SCTPConn
+	Notify             chan interface{}
+	logger             *logrus.Entry
+	ctx                context.Context
+	cancelFunc         context.CancelFunc
 }
 
 func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, amfAddress net.IP, amfPort int, sst uint8, sd uint32, parent context.Context) *GNB {
 	//TODO: check if same name gnb exists
 	mqueue.NewQueue(name)
-	//TODO: change context
 	ctx, cancelFunc := context.WithCancel(parent)
 	return &GNB{
 		name:            name,
@@ -59,12 +62,14 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 			Sst: sst,
 			Sd:  sd,
 		},
-		ueMapBySupi:          make(map[string]*GNBUE),
-		supiMapByRANUENGAPID: make(map[int64]string),
-		running:              false,
-		sctpConn:             nil,
-		ctx:                  ctx,
-		cancelFunc:           cancelFunc,
+		ueMapBySupi:        make(map[string]*utils.GnbUe),
+		ueMapByRANUENGAPID: make(map[int64]*utils.GnbUe),
+		running:            false,
+		sctpConn:           nil,
+		Notify:             make(chan interface{}, 1),
+		logger:             logger.GnbLog.WithFields(logrus.Fields{"name": name}),
+		ctx:                ctx,
+		cancelFunc:         cancelFunc,
 	}
 }
 
@@ -83,6 +88,7 @@ func (g *GNB) Connected() bool {
 func (g *GNB) SetName(name string) *GNB {
 	mqueue.DelQueue(g.name)
 	g.name = name
+	g.logger = logger.GnbLog.WithFields(logrus.Fields{"name": name})
 	mqueue.NewQueue(g.name)
 	return g
 }
@@ -90,6 +96,7 @@ func (g *GNB) SetName(name string) *GNB {
 func (g *GNB) Copy(name string) *GNB {
 	gnb := *g
 	gnb.name = name
+	gnb.logger = logger.GnbLog.WithFields(logrus.Fields{"name": name})
 	mqueue.NewQueue(name)
 	return &gnb
 }
@@ -113,35 +120,36 @@ func (g *GNB) getMessageChan() chan interface{} {
 	return mqueue.GetMessageChan(g.name)
 }
 
-func (g *GNB) FindUEBySUPI(supi string) *GNBUE {
+func (g *GNB) FindUEBySUPI(supi string) *utils.GnbUe {
 	if ue, ok := g.ueMapBySupi[supi]; ok {
 		return ue
 	}
 	return nil
 }
 
-func (g GNB) FindUEByRANUENGAPID(id int64) *GNBUE {
-	if supi, ok := g.supiMapByRANUENGAPID[id]; ok {
-		if ue, ok := g.ueMapBySupi[supi]; ok {
-			return ue
-		}
+func (g GNB) FindUEByRANUENGAPID(id int64) *utils.GnbUe {
+	if ue, ok := g.ueMapByRANUENGAPID[id]; ok {
+		return ue
 	}
 	return nil
 }
 
 func (g *GNB) Run() error {
 	g.running = true
+	g.logger.Debugf("SCTP dial %v:%v", g.amfAddress, g.amfPort)
 	conn, err := Dial(g.amfAddress, g.amfPort)
 	if err != nil {
+		g.Stop()
 		return errors.Wrapf(err, "Failed to dial sctp address %v:%v", g.amfAddress, g.amfPort)
 	}
 	g.sctpConn = conn
+	go g.sctpHandler(readBufSize)
+	go g.messageHandler()
 	err = g.connectToAmf()
 	if err != nil {
+		g.Stop()
 		return errors.Wrapf(err, "Send NGSetupRequestPDU error.")
 	}
-	go g.connectionHandler(readBufSize)
-	go g.messageHandler()
 	return nil
 }
 
@@ -191,23 +199,4 @@ func (g *GNB) allocateRANUENGAPID() int64 {
 		}
 	}
 	return rANUENGAPID
-}
-
-func (g *GNB) sendInitialUEMessage(id int64, nas []byte) error {
-	initialUEMessage, err := g.BuildInitialUEMessage(id, nas)
-	if err != nil {
-		return errors.WithMessagef(err, "InitialUEMessage PDU build failed.")
-	}
-	_, err = g.sctpConn.Write(initialUEMessage)
-	if err != nil {
-		return errors.WithMessagef(err, "InitialUEMessage Send failed.")
-	}
-
-	return nil
-}
-
-type GNBUE struct {
-	supi    string
-	plmn    utils.PLMN
-	lastNas []byte
 }
