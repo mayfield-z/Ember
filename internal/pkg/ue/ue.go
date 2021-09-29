@@ -75,6 +75,11 @@ type UE struct {
 	ULCount      security.Count
 	DLCount      security.Count
 
+	aMFRegionID uint8
+	aMFPointer  uint8
+	aMFSetID    uint16
+	gGuti       [4]uint8
+
 	id        uint8
 	snn       string
 	ctx       context.Context

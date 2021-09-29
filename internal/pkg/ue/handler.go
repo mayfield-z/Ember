@@ -162,8 +162,8 @@ func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
 	case nas.MsgTypeSecurityModeCommand:
 		u.handleSecurityModeCommand(decodedMsg)
 	case nas.MsgTypeRegistrationAccept:
-		// TODO: A handler?
 		u.nasLogger.Info("registration accepted")
+		u.handleRegistrationAccept(decodedMsg)
 	default:
 		u.nasLogger.Errorf("unsupported message type %v", decodedMsg.GmmMessage.GetMessageType())
 	}

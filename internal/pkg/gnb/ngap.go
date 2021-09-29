@@ -7,6 +7,8 @@ import (
 	"github.com/free5gc/ngap"
 	"github.com/free5gc/ngap/ngapType"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/message"
+	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"net"
@@ -220,6 +222,7 @@ func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
 	var (
 		//aMFUENGAPIDValue int64
 		rANUENGAPIDValue int64
+		nasPdu           []byte
 	)
 	initialContextSetupRequest := pdu.InitiatingMessage.Value.InitialContextSetupRequest
 	if initialContextSetupRequest == nil {
@@ -234,6 +237,8 @@ func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
 		//	aMFUENGAPIDValue = ie.Value.AMFUENGAPID.Value
 		case ngapType.ProtocolIEIDRANUENGAPID:
 			rANUENGAPIDValue = ie.Value.RANUENGAPID.Value
+		case ngapType.ProtocolIEIDNASPDU:
+			nasPdu = ie.Value.NASPDU.Value
 		}
 
 	}
@@ -250,6 +255,7 @@ func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
 	if err != nil {
 		logger.SctpLog.Errorln("initial context setup response send failed")
 	}
+	mqueue.SendMessage(message.NASDownlinkPdu{PDU: nasPdu}, ue.SUPI)
 }
 
 // buildNGSetupRequest referring to TS 38.413 -> 9.2.6.1

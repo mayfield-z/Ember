@@ -180,10 +180,12 @@ func (u *UE) handleSecurityModeCommand(msg *nas.Message) {
 	securityModeComplete, err := u.buildSecurityModeComplete(rinmr)
 	if err != nil {
 		u.nasLogger.Errorf("Error sending Security Mode Complete: %v", err)
+		return
 	}
 	pdu, err := u.encodeNASPduWithSecurity(securityModeComplete, true, nas.SecurityHeaderTypeIntegrityProtectedAndCipheredWithNew5gNasSecurityContext)
 	if err != nil {
 		u.nasLogger.Errorf("Error sending Security Mode Complete: %v", err)
+		return
 	}
 
 	// sending to GNB
@@ -232,6 +234,55 @@ func (u *UE) buildSecurityModeComplete(rinmr uint8) ([]byte, error) {
 
 	nasPdu := data.Bytes()
 	return nasPdu, nil
+}
+
+func (u *UE) handleRegistrationAccept(msg *nas.Message) {
+	registrationAccept := msg.RegistrationAccept
+	if registrationAccept == nil {
+		u.nasLogger.Errorf("registration accept is nil")
+		return
+	}
+	u.gGuti = registrationAccept.GetTMSI5G()
+	u.aMFPointer = registrationAccept.GetAMFPointer()
+	u.aMFRegionID = registrationAccept.GetAMFRegionID()
+	u.aMFSetID = registrationAccept.GetAMFSetID()
+
+	registrationComplete, err := u.buildRegistrationComplete()
+	if err != nil {
+		u.nasLogger.Errorf("handle registration accept failed")
+		return
+	}
+
+	mqueue.SendMessage(message.NASUplinkPdu{PDU: registrationComplete, SendBy: u.supi}, u.gnb.Name)
+}
+
+func (u *UE) buildRegistrationComplete() ([]byte, error) {
+	m := nas.NewMessage()
+	m.GmmMessage = nas.NewGmmMessage()
+	m.GmmHeader.SetMessageType(nas.MsgTypeRegistrationComplete)
+
+	registrationComplete := nasMessage.NewRegistrationComplete(0)
+	registrationComplete.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(nasMessage.Epd5GSMobilityManagementMessage)
+	registrationComplete.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(nas.SecurityHeaderTypePlainNas)
+	registrationComplete.SpareHalfOctetAndSecurityHeaderType.SetSpareHalfOctet(0)
+	registrationComplete.RegistrationCompleteMessageIdentity.SetMessageType(nas.MsgTypeRegistrationComplete)
+
+	m.GmmMessage.RegistrationComplete = registrationComplete
+
+	data := new(bytes.Buffer)
+	err := m.GmmMessageEncode(data)
+	if err != nil {
+		return nil, errors.WithMessage(err, "build registration complete failed")
+	}
+
+	pdu := data.Bytes()
+
+	pdu, err = u.encodeNASPduWithSecurity(pdu, false, nas.SecurityHeaderTypeIntegrityProtectedAndCiphered)
+	if err != nil {
+		return nil, errors.WithMessage(err, "build registration complete failed")
+	}
+
+	return pdu, nil
 }
 
 func (u *UE) encodeNASPduWithSecurity(payload []byte, newSecurityContext bool, securityHeaderType uint8) ([]byte, error) {
