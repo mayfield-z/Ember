@@ -49,6 +49,7 @@ type Controller struct {
 	initialed              bool
 	supiPointer            string
 	n2IpPointer            net.IP
+	ueIdPointer            uint8
 	globalRANNodeIDPointer uint32
 	nrCellIdentityPointer  uint64
 
@@ -81,6 +82,7 @@ func (c *Controller) Init(configPath string) error {
 	c.ctx, c.cancelFunc = context.WithCancel(context.Background())
 	c.globalRANNodeIDPointer = 1
 	c.nrCellIdentityPointer = 1
+	c.ueIdPointer = 1
 	c.configPath = configPath
 
 	err := c.parseConfig(configPath)
@@ -191,6 +193,7 @@ func (c *Controller) parseConfig(configPath string) error {
 		viper.GetString("ue.dataRate.uplink"),
 		viper.GetString("ue.dataRate.downlink"),
 		pduSessions,
+		0,
 		c.ctx,
 	)
 
@@ -295,13 +298,14 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 
 func (c *Controller) createAndAddUE() *ue.UE {
 	logger.ControllerLog.Infof("Creating UE: %v", c.supiPointer)
-	ue := c.templateUE.Copy(c.supiPointer)
+	ue := c.templateUE.Copy(c.supiPointer, c.ueIdPointer)
 	imsi, err := strconv.ParseUint(strings.Split(c.supiPointer, "-")[1], 10, 64)
 	if err != nil {
 		logger.ControllerLog.Errorf("create ue failed: %+v", err)
 		return nil
 	}
 	c.supiPointer = fmt.Sprintf("imsi-%v", imsi+1)
+	c.ueIdPointer += 1
 
 	c.addUE(ue)
 	return ue

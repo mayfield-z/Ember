@@ -72,7 +72,10 @@ type UE struct {
 	integrityAlg uint8
 	knasEnc      [16]uint8
 	knasInt      [16]uint8
+	ULCount      security.Count
+	DLCount      security.Count
 
+	id        uint8
 	snn       string
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -83,7 +86,7 @@ type UE struct {
 	nasLogger *logrus.Entry
 }
 
-func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []utils.PDU, parent context.Context) *UE {
+func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []utils.PDU, id uint8, parent context.Context) *UE {
 	// TODO: check dup
 	mqueue.NewQueue(supi)
 	ctx, cancelFunc := context.WithCancel(parent)
@@ -127,6 +130,7 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 			nil,
 			nil,
 		),
+		id:        id,
 		ctx:       ctx,
 		cancel:    cancelFunc,
 		Notify:    make(chan interface{}, 1),
@@ -151,10 +155,11 @@ func (u *UE) SetSUPI(supi string) {
 	mqueue.NewQueue(supi)
 }
 
-func (u *UE) Copy(supi string) *UE {
+func (u *UE) Copy(supi string, id uint8) *UE {
 	// TODO: check source ue state
 	ue := *u
 	ue.supi = supi
+	u.id = id
 	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	mqueue.NewQueue(supi)

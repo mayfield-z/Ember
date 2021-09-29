@@ -50,9 +50,10 @@ func (u *UE) handleRRCRejectMessage(msg message.RRCReject) {
 	// implement when needed.
 	panic("not implement")
 }
+
 func (u *UE) sendRRCSetupCompleteMessage(name string) {
 	u.logger.Debugf("Send message RRCSetupComplete")
-	nas, err := u.buildRegistrationRequest()
+	nas, err := u.buildRegistrationRequest(false)
 	if err != nil {
 		u.logger.Errorf("Build RegistrationRequest failed: %+v", err)
 		return
@@ -66,33 +67,90 @@ func (u *UE) sendRRCSetupCompleteMessage(name string) {
 }
 
 func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
+	var cph bool
 	u.logger.Debugf("Handle message NASPdu")
-	payload := msg.PDU
-	if payload == nil {
-		u.nasLogger.Errorf("NAS payload is empty")
+	rawMessage := msg.PDU
+	if rawMessage == nil {
+		u.nasLogger.Errorf("NAS rawMessage is empty")
 	}
 
 	decodedMsg := new(nas.Message)
-	decodedMsg.SecurityHeaderType = nas.GetSecurityHeaderType(payload) & 0x0f
+	decodedMsg.SecurityHeaderType = nas.GetSecurityHeaderType(rawMessage) & 0x0f
 	u.nasLogger.Tracef("securityHeaderType is %v", decodedMsg.SecurityHeaderType)
 	if decodedMsg.SecurityHeaderType == nas.SecurityHeaderTypePlainNas {
-		err := decodedMsg.PlainNasDecode(&payload)
+		err := decodedMsg.PlainNasDecode(&rawMessage)
 		if err != nil {
 			u.nasLogger.Errorf("decode NAS pdu failed %v", err)
 		}
 	} else {
-		//securityHeader := payload[0:6]
-		//sequenceNumber := payload[6]
-		//
-		//receivedMac32 := securityHeader[2:]
-		//
-		//payload = payload[6:]
-		//
-		//ciphered := false
-		//switch msg.SecurityHeaderType {
-		//case nas.SecurityHeaderTypeIntegrityProtectedWithNew5gNasSecurityContext:
-		//	ciphered = true
-		//}
+		sequenceNumber := rawMessage[6]
+		macReceived := rawMessage[2:6]
+		payload := rawMessage[6:]
+
+		switch decodedMsg.SecurityHeaderType {
+
+		case nas.SecurityHeaderTypeIntegrityProtected:
+			u.nasLogger.Debugf("Message with integrity")
+
+		case nas.SecurityHeaderTypeIntegrityProtectedAndCiphered:
+			u.nasLogger.Debugf("Message with integrity and ciphered")
+			cph = true
+
+		case nas.SecurityHeaderTypeIntegrityProtectedWithNew5gNasSecurityContext:
+			u.nasLogger.Debugf("Message with integrity and with NEW 5G NAS SECURITY CONTEXT")
+			u.DLCount.Set(0, 0)
+
+		case nas.SecurityHeaderTypeIntegrityProtectedAndCipheredWithNew5gNasSecurityContext:
+			u.nasLogger.Info("Message with integrity, ciphered and with NEW 5G NAS SECURITY CONTEXT")
+			cph = true
+			u.DLCount.Set(0, 0)
+
+		}
+
+		// check security header(Downlink data).
+		if u.DLCount.SQN() > sequenceNumber {
+			u.DLCount.SetOverflow(u.DLCount.Overflow() + 1)
+		}
+		u.DLCount.SetSQN(sequenceNumber)
+
+		mac32, err := security.NASMacCalculate(u.integrityAlg,
+			u.knasInt,
+			u.DLCount.Get(),
+			security.Bearer3GPP,
+			security.DirectionDownlink, payload)
+		if err != nil {
+			u.nasLogger.Info("NAS MAC calculate error")
+			return
+		}
+
+		// check integrity
+		if !reflect.DeepEqual(mac32, macReceived) {
+			u.nasLogger.Info("NAS MAC verification failed(received:", macReceived, "expected:", mac32)
+			return
+		} else {
+			u.nasLogger.Info("successful NAS MAC verification")
+		}
+
+		// check ciphering.
+		if cph {
+			if err = security.NASEncrypt(u.cipheringAlg, u.knasEnc, u.DLCount.Get(), security.Bearer3GPP,
+				security.DirectionDownlink, payload[1:]); err != nil {
+				u.nasLogger.Info("error in encrypt algorithm")
+				return
+			} else {
+				u.nasLogger.Info("[UE][NAS] successful NAS CIPHERING")
+			}
+		}
+
+		// remove security header.
+		payload = rawMessage[7:]
+
+		// decode NAS message.
+		err = decodedMsg.PlainNasDecode(&payload)
+		if err != nil {
+			// TODO return error
+			u.nasLogger.Info("Decode NAS error", err)
+		}
 	}
 
 	if decodedMsg.GmmMessage == nil {
@@ -101,8 +159,10 @@ func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
 	switch decodedMsg.GmmMessage.GetMessageType() {
 	case nas.MsgTypeAuthenticationRequest:
 		u.handleAuthenticationRequest(decodedMsg)
+	case nas.MsgTypeSecurityModeCommand:
+		u.handleSecurityModeCommand(decodedMsg)
 	default:
-		u.nasLogger.Errorf("unsupported message type %T", decodedMsg.GmmMessage.GetMessageType())
+		u.nasLogger.Errorf("unsupported message type %v", decodedMsg.GmmMessage.GetMessageType())
 	}
 }
 

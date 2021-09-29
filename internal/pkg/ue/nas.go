@@ -8,12 +8,14 @@ import (
 	"github.com/free5gc/nas"
 	"github.com/free5gc/nas/nasMessage"
 	"github.com/free5gc/nas/nasType"
+	"github.com/free5gc/nas/security"
 	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
+	"github.com/pkg/errors"
 )
 
-func (u *UE) buildRegistrationRequest() ([]byte, error) {
+func (u *UE) buildRegistrationRequest(capability bool) ([]byte, error) {
 	m := nas.NewMessage()
 	m.GmmMessage = nas.NewGmmMessage()
 	m.GmmMessage.SetMessageType(nas.MsgTypeRegistrationRequest)
@@ -27,6 +29,7 @@ func (u *UE) buildRegistrationRequest() ([]byte, error) {
 
 	// NAS Key set identifier and 5GS registration type
 	registrationRequest.NgksiAndRegistrationType5GS.Octet = 0x79
+	registrationRequest.NgksiAndRegistrationType5GS.SetRegistrationType5GS(nasMessage.RegistrationType5GSInitialRegistration)
 
 	// 5GS mobile identity
 	mobileIdentity5GS := append([]uint8{0x01}, utils.EncodePLMNToNgap(u.plmn).Value...)
@@ -71,6 +74,14 @@ func (u *UE) buildRegistrationRequest() ([]byte, error) {
 	uESecurityCapability.SetEIA5(0)
 	uESecurityCapability.SetEIA6(0)
 	uESecurityCapability.SetEIA7(0)
+
+	if capability {
+		registrationRequest.Capability5GMM = &nasType.Capability5GMM{
+			Iei:   nasMessage.RegistrationRequestCapability5GMMType,
+			Len:   1,
+			Octet: [13]uint8{0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		}
+	}
 
 	m.GmmMessage.RegistrationRequest = registrationRequest
 
@@ -141,4 +152,123 @@ func (u *UE) buildAuthenticationResponse(authenticationResponseParam []uint8, ea
 
 	nasPdu := data.Bytes()
 	return nasPdu, nil
+}
+
+func (u *UE) handleSecurityModeCommand(msg *nas.Message) {
+	switch msg.SecurityModeCommand.SelectedNASSecurityAlgorithms.GetTypeOfCipheringAlgorithm() {
+	case 0:
+		u.nasLogger.Debug("Type of ciphering algorithm is 5G-EA0")
+	case 1:
+		u.nasLogger.Debug("Type of ciphering algorithm is 128-5G-EA1")
+	case 2:
+		u.nasLogger.Debug("Type of ciphering algorithm is 128-5G-EA2")
+	}
+
+	switch msg.SecurityModeCommand.SelectedNASSecurityAlgorithms.GetTypeOfIntegrityProtectionAlgorithm() {
+	case 0:
+		u.nasLogger.Debug("Type of integrity protection algorithm is 5G-IA0")
+	case 1:
+		u.nasLogger.Debug("Type of integrity protection algorithm is 128-5G-IA1")
+	case 2:
+		u.nasLogger.Debug("Type of integrity protection algorithm is 128-5G-IA2")
+	}
+
+	// checking BIT RINMR that triggered registration request in security mode complete.
+	rinmr := msg.SecurityModeCommand.Additional5GSecurityInformation.GetRINMR()
+
+	// getting NAS Security Mode Complete.
+	securityModeComplete, err := u.buildSecurityModeComplete(rinmr)
+	if err != nil {
+		u.nasLogger.Errorf("Error sending Security Mode Complete: %v", err)
+	}
+	pdu, err := u.encodeNASPduWithSecurity(securityModeComplete, true, nas.SecurityHeaderTypeIntegrityProtectedAndCipheredWithNew5gNasSecurityContext)
+	if err != nil {
+		u.nasLogger.Errorf("Error sending Security Mode Complete: %v", err)
+	}
+
+	// sending to GNB
+	mqueue.SendMessage(message.NASUplinkPdu{PDU: pdu, SendBy: u.supi}, u.gnb.Name)
+}
+
+func (u *UE) buildSecurityModeComplete(rinmr uint8) ([]byte, error) {
+	registrationRequest, err := u.buildRegistrationRequest(true)
+	if err != nil {
+		return nil, errors.WithMessage(err, "build registration request in security mode complete failed.")
+	}
+
+	m := nas.NewMessage()
+	m.GmmMessage = nas.NewGmmMessage()
+	m.GmmHeader.SetMessageType(nas.MsgTypeSecurityModeComplete)
+
+	m.GmmMessage.SecurityModeComplete = nasMessage.NewSecurityModeComplete(0)
+	securityModeComplete := m.GmmMessage.SecurityModeComplete
+	securityModeComplete.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(nasMessage.Epd5GSMobilityManagementMessage)
+	// TODO: modify security header type if need security protected
+	securityModeComplete.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(nas.SecurityHeaderTypePlainNas)
+	securityModeComplete.SpareHalfOctetAndSecurityHeaderType.SetSpareHalfOctet(0)
+	securityModeComplete.SecurityModeCompleteMessageIdentity.SetMessageType(nas.MsgTypeSecurityModeComplete)
+
+	securityModeComplete.IMEISV = nasType.NewIMEISV(nasMessage.SecurityModeCompleteIMEISVType)
+	securityModeComplete.IMEISV.SetLen(9)
+	securityModeComplete.SetOddEvenIdic(0)
+	securityModeComplete.SetTypeOfIdentity(nasMessage.MobileIdentity5GSTypeImeisv)
+	securityModeComplete.SetIdentityDigit1(1)
+	securityModeComplete.SetIdentityDigitP_1(1)
+	securityModeComplete.SetIdentityDigitP(1)
+
+	if registrationRequest != nil {
+		securityModeComplete.NASMessageContainer = nasType.NewNASMessageContainer(nasMessage.SecurityModeCompleteNASMessageContainerType)
+		securityModeComplete.NASMessageContainer.SetLen(uint16(len(registrationRequest)))
+		securityModeComplete.NASMessageContainer.SetNASMessageContainerContents(registrationRequest)
+	}
+
+	m.GmmMessage.SecurityModeComplete = securityModeComplete
+
+	data := new(bytes.Buffer)
+	err = m.GmmMessageEncode(data)
+	if err != nil {
+		return nil, errors.WithMessage(err, "gmm message encode in build security mode complete failed")
+	}
+
+	nasPdu := data.Bytes()
+	return nasPdu, nil
+}
+
+func (u *UE) encodeNASPduWithSecurity(payload []byte, newSecurityContext bool, securityHeaderType uint8) ([]byte, error) {
+	var sequenceNumber uint8
+	msg := nas.NewMessage()
+	err := msg.PlainNasDecode(&payload)
+	if err != nil {
+		return nil, errors.WithMessage(err, "encode NAS PDU with security failed")
+	}
+	msg.SecurityHeader = nas.SecurityHeader{
+		ProtocolDiscriminator: nasMessage.Epd5GSMobilityManagementMessage,
+		SecurityHeaderType:    securityHeaderType,
+	}
+	if newSecurityContext {
+		u.ULCount.Set(0, 0)
+		u.DLCount.Set(0, 0)
+	}
+
+	sequenceNumber = u.ULCount.SQN()
+	err = security.NASEncrypt(u.cipheringAlg, u.knasEnc, u.ULCount.Get(), security.Bearer3GPP, security.DirectionUplink, payload)
+	if err != nil {
+		return nil, errors.WithMessage(err, "NAS encrypt failed")
+	}
+
+	payload = append([]byte{sequenceNumber}, payload[:]...)
+	mac32 := make([]byte, 4)
+
+	mac32, err = security.NASMacCalculate(u.integrityAlg, u.knasInt, u.ULCount.Get(), security.Bearer3GPP, security.DirectionUplink, payload)
+	if err != nil {
+		return nil, errors.WithMessage(err, "NASMacCalculate failed")
+	}
+
+	payload = append(mac32, payload[:]...)
+	msgSecurityHeader := []byte{msg.SecurityHeader.ProtocolDiscriminator, msg.SecurityHeader.SecurityHeaderType}
+	payload = append(msgSecurityHeader, payload[:]...)
+
+	u.ULCount.AddOne()
+
+	return payload, nil
 }
