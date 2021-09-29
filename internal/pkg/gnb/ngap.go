@@ -86,7 +86,7 @@ func Dial(ip net.IP, port int) (*sctp.SCTPConn, error) {
 }
 
 func (g *GNB) sendInitialUEMessage(id int64, nas []byte) error {
-	initialUEMessage, err := g.BuildInitialUEMessage(id, nas)
+	initialUEMessage, err := g.buildInitialUEMessage(id, nas)
 	if err != nil {
 		return errors.WithMessagef(err, "InitialUEMessage PDU build failed.")
 	}
@@ -98,7 +98,7 @@ func (g *GNB) sendInitialUEMessage(id int64, nas []byte) error {
 	return nil
 }
 
-func handleNGSetupResponse(gnb *GNB, pdu *ngapType.NGAPPDU) {
+func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 	var (
 		aMFName             *ngapType.AMFName
 		servedGUAMIList     *ngapType.ServedGUAMIList
@@ -122,7 +122,7 @@ func handleNGSetupResponse(gnb *GNB, pdu *ngapType.NGAPPDU) {
 				logger.NgapLog.Errorln("AMFName is nil")
 				return
 			}
-			gnb.gnbAmf.AmfName = aMFName.Value
+			g.gnbAmf.AmfName = aMFName.Value
 		case ngapType.ProtocolIEIDServedGUAMIList:
 			servedGUAMIList = ie.Value.ServedGUAMIList
 			logger.NgapLog.Traceln("Handle IE GUAMIList")
@@ -133,21 +133,21 @@ func handleNGSetupResponse(gnb *GNB, pdu *ngapType.NGAPPDU) {
 				logger.NgapLog.Errorln("ServedGUAMIList len is 0")
 			}
 			// TODO: support multiple GUAMIList
-			gnb.gnbAmf.GUAMI.Plmn = utils.DecodePLMNFromNgap(servedGUAMIList.List[0].GUAMI.PLMNIdentity)
+			g.gnbAmf.GUAMI.Plmn = utils.DecodePLMNFromNgap(servedGUAMIList.List[0].GUAMI.PLMNIdentity)
 			gUAMI := &servedGUAMIList.List[0].GUAMI
 			amfId := uint32(gUAMI.AMFRegionID.Value.Bytes[0])
 			amfId <<= 16
 			amfId += uint32(binary.BigEndian.Uint16(gUAMI.AMFSetID.Value.Bytes))
 			// TODO: check if cafe01
 			amfId += uint32(gUAMI.AMFPointer.Value.Bytes[0])
-			gnb.gnbAmf.GUAMI.AmfId = amfId
+			g.gnbAmf.GUAMI.AmfId = amfId
 		case ngapType.ProtocolIEIDRelativeAMFCapacity:
 			relativeAMFCapacity = ie.Value.RelativeAMFCapacity
 			logger.NgapLog.Traceln("Handle IE RelativeAMFCapacity")
 			if relativeAMFCapacity == nil {
 				logger.NgapLog.Errorln("RelativeAMFCapacity is nil")
 			}
-			gnb.gnbAmf.Capacity = relativeAMFCapacity.Value
+			g.gnbAmf.Capacity = relativeAMFCapacity.Value
 		case ngapType.ProtocolIEIDPLMNSupportList:
 			pLMNSupportList = ie.Value.PLMNSupportList
 			// TODO: implement
@@ -160,20 +160,21 @@ func handleNGSetupResponse(gnb *GNB, pdu *ngapType.NGAPPDU) {
 		}
 	}
 
-	gnb.gnbAmf.Connected = true
+	g.gnbAmf.Connected = true
 }
 
-func handleNGSetupFailure(gnb *GNB, pdu *ngapType.NGAPPDU) {
+func (g *GNB) handleNGSetupFailure(pdu *ngapType.NGAPPDU) {
 	// TODO: implement
-	gnb.gnbAmf.Connected = false
+	g.gnbAmf.Connected = false
 }
 
-func handleDownlinkNASTransport(gnb *GNB, pdu *ngapType.NGAPPDU) {
+func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {
 	var (
 		aMFUENGAPID      *ngapType.AMFUENGAPID
 		rANUENGAPID      *ngapType.RANUENGAPID
 		nASPDU           *ngapType.NASPDU
 		aMFUENGAPIDValue int64
+		rANUENGAPIDValue int64
 		gnbue            *utils.GnbUe
 	)
 	initiatingMessage := pdu.InitiatingMessage
@@ -200,9 +201,7 @@ func handleDownlinkNASTransport(gnb *GNB, pdu *ngapType.NGAPPDU) {
 				logger.NgapLog.Errorln("RANUENGAPID is nil")
 				return
 			}
-			rANUENGAPIDValue := rANUENGAPID.Value
-			gnbue = gnb.FindUEByRANUENGAPID(rANUENGAPIDValue)
-			gnbue.AMFUENGAPID = aMFUENGAPIDValue
+			rANUENGAPIDValue = rANUENGAPID.Value
 		case ngapType.ProtocolIEIDNASPDU:
 			nASPDU = ie.Value.NASPDU
 			logger.NgapLog.Traceln("Handle NASPDU")
@@ -210,13 +209,51 @@ func handleDownlinkNASTransport(gnb *GNB, pdu *ngapType.NGAPPDU) {
 				logger.NgapLog.Errorln("NASPDU is nil")
 				return
 			}
-			gnb.sendNASDownlinkPdu(gnbue.SUPI, nASPDU.Value)
+			g.sendNASDownlinkPdu(gnbue.SUPI, nASPDU.Value)
 		}
+		gnbue = g.FindUEByRANUENGAPID(rANUENGAPIDValue)
+		gnbue.AMFUENGAPID = aMFUENGAPIDValue
 	}
 }
 
-// BuildNGSetupRequest referring to TS 38.413 -> 9.2.6.1
-func (g *GNB) BuildNGSetupRequest() ([]byte, error) {
+func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
+	var (
+		//aMFUENGAPIDValue int64
+		rANUENGAPIDValue int64
+	)
+	initialContextSetupRequest := pdu.InitiatingMessage.Value.InitialContextSetupRequest
+	if initialContextSetupRequest == nil {
+		logger.NgapLog.Errorln("initialContextSetupRequest is nil")
+		return
+	}
+	logger.NgapLog.Info("Handle initial context setup request")
+	for _, ie := range initialContextSetupRequest.ProtocolIEs.List {
+		switch ie.Id.Value {
+		// TODO: more case
+		//case ngapType.ProtocolIEIDAMFUENGAPID:
+		//	aMFUENGAPIDValue = ie.Value.AMFUENGAPID.Value
+		case ngapType.ProtocolIEIDRANUENGAPID:
+			rANUENGAPIDValue = ie.Value.RANUENGAPID.Value
+		}
+
+	}
+	ue := g.FindUEByRANUENGAPID(rANUENGAPIDValue)
+	if ue == nil {
+		logger.NgapLog.Errorf("cannot find ue with RANUENGAPIDValue %v", rANUENGAPIDValue)
+		return
+	}
+	initialContextSetupResponse, err := g.buildInitialContextSetupResponse(ue)
+	if err != nil {
+		logger.NgapLog.Errorln("initial context setup response build failed")
+	}
+	_, err = g.sctpConn.Write(initialContextSetupResponse)
+	if err != nil {
+		logger.SctpLog.Errorln("initial context setup response send failed")
+	}
+}
+
+// buildNGSetupRequest referring to TS 38.413 -> 9.2.6.1
+func (g *GNB) buildNGSetupRequest() ([]byte, error) {
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
 	pdu.InitiatingMessage = new(ngapType.InitiatingMessage)
@@ -302,7 +339,7 @@ func (g *GNB) BuildNGSetupRequest() ([]byte, error) {
 	return ngap.Encoder(pdu)
 }
 
-func (g *GNB) BuildInitialUEMessage(id int64, nas []byte) ([]byte, error) {
+func (g *GNB) buildInitialUEMessage(id int64, nas []byte) ([]byte, error) {
 	ue := g.FindUEByRANUENGAPID(id)
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
@@ -386,7 +423,7 @@ func (g *GNB) BuildInitialUEMessage(id int64, nas []byte) ([]byte, error) {
 	return ngap.Encoder(pdu)
 }
 
-func (g *GNB) BuildUplinkNASTransport(ue *utils.GnbUe, nas []byte) ([]byte, error) {
+func (g *GNB) buildUplinkNASTransport(ue *utils.GnbUe, nas []byte) ([]byte, error) {
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
 	pdu.InitiatingMessage = new(ngapType.InitiatingMessage)
@@ -453,6 +490,47 @@ func (g *GNB) BuildUplinkNASTransport(ue *utils.GnbUe, nas []byte) ([]byte, erro
 	userLocationInformationNR.NRCGI.NRCellIdentity.Value.BitLength = 36
 
 	uplinkNASTransportIEs.List = append(uplinkNASTransportIEs.List, ie)
+
+	return ngap.Encoder(pdu)
+}
+
+func (g *GNB) buildInitialContextSetupResponse(ue *utils.GnbUe) ([]byte, error) {
+	var pdu ngapType.NGAPPDU
+	pdu.Present = ngapType.NGAPPDUPresentSuccessfulOutcome
+	pdu.SuccessfulOutcome = new(ngapType.SuccessfulOutcome)
+
+	successfulOutcome := pdu.SuccessfulOutcome
+	successfulOutcome.ProcedureCode.Value = ngapType.ProcedureCodeInitialContextSetup
+	successfulOutcome.Criticality.Value = ngapType.CriticalityPresentReject
+	successfulOutcome.Value.Present = ngapType.SuccessfulOutcomePresentInitialContextSetupResponse
+	successfulOutcome.Value.InitialContextSetupResponse = new(ngapType.InitialContextSetupResponse)
+
+	initialContextSetupResponse := successfulOutcome.Value.InitialContextSetupResponse
+	initialContextSetupResponseIEs := &initialContextSetupResponse.ProtocolIEs
+
+	// AMFUENGAPID
+	ie := ngapType.InitialContextSetupResponseIEs{}
+	ie.Id.Value = ngapType.ProtocolIEIDAMFUENGAPID
+	ie.Criticality.Value = ngapType.CriticalityPresentReject
+	ie.Value.Present = ngapType.UplinkNASTransportIEsPresentAMFUENGAPID
+	ie.Value.AMFUENGAPID = new(ngapType.AMFUENGAPID)
+
+	aMFUENGAPID := ie.Value.AMFUENGAPID
+	aMFUENGAPID.Value = ue.AMFUENGAPID
+
+	initialContextSetupResponseIEs.List = append(initialContextSetupResponseIEs.List, ie)
+
+	// RANUENGAPID
+	ie = ngapType.InitialContextSetupResponseIEs{}
+	ie.Id.Value = ngapType.ProtocolIEIDRANUENGAPID
+	ie.Criticality.Value = ngapType.CriticalityPresentReject
+	ie.Value.Present = ngapType.UplinkNASTransportIEsPresentRANUENGAPID
+	ie.Value.RANUENGAPID = new(ngapType.RANUENGAPID)
+
+	rANUENGAPID := ie.Value.RANUENGAPID
+	rANUENGAPID.Value = ue.RANUENGAPID
+
+	initialContextSetupResponseIEs.List = append(initialContextSetupResponseIEs.List, ie)
 
 	return ngap.Encoder(pdu)
 }

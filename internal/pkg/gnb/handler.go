@@ -82,7 +82,7 @@ func (g *GNB) handleNASUplinkPdu(msg message.NASUplinkPdu) {
 		return
 	}
 	g.logger.Tracef("received uplink pdu is from: %v\n %+v", msg.SendBy, hex.Dump(msg.PDU))
-	pdu, err := g.BuildUplinkNASTransport(ue, msg.PDU)
+	pdu, err := g.buildUplinkNASTransport(ue, msg.PDU)
 	if err != nil {
 		g.logger.Errorf("handle NAS Uplink PDU failed %v", err)
 		return
@@ -173,7 +173,9 @@ func (g *GNB) ngapHandler(buf []byte) {
 		}
 		switch initiatingMessage.ProcedureCode.Value {
 		case ngapType.ProcedureCodeDownlinkNASTransport:
-			handleDownlinkNASTransport(g, pdu)
+			g.handleDownlinkNASTransport(pdu)
+		case ngapType.ProcedureCodeInitialContextSetup:
+			g.handleInitialContextSetupRequest(pdu)
 		}
 	case ngapType.NGAPPDUPresentSuccessfulOutcome:
 		successfulOutcome := pdu.SuccessfulOutcome
@@ -183,7 +185,7 @@ func (g *GNB) ngapHandler(buf []byte) {
 		}
 		switch successfulOutcome.ProcedureCode.Value {
 		case ngapType.ProcedureCodeNGSetup:
-			handleNGSetupResponse(g, pdu)
+			g.handleNGSetupResponse(pdu)
 		}
 	case ngapType.NGAPPDUPresentUnsuccessfulOutcome:
 		unsuccessfulOutcome := pdu.UnsuccessfulOutcome
@@ -193,7 +195,7 @@ func (g *GNB) ngapHandler(buf []byte) {
 		}
 		switch unsuccessfulOutcome.ProcedureCode.Value {
 		case ngapType.ProcedureCodeNGSetup:
-			handleNGSetupFailure(g, pdu)
+			g.handleNGSetupFailure(pdu)
 		}
 	}
 }

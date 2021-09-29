@@ -169,7 +169,7 @@ func (g *GNB) connectToAmf() error {
 }
 
 func (g *GNB) sendNGSetupRequestPDU() error {
-	nGSetupRequest, err := g.BuildNGSetupRequest()
+	nGSetupRequest, err := g.buildNGSetupRequest()
 	if err != nil {
 		return errors.Wrapf(err, "NGSetupRequestPDU build failed")
 	}
