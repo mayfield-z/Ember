@@ -259,8 +259,8 @@ func (c *Controller) start() {
 			select {
 			case msg := <-currentUE.Notify:
 				switch msg.(type) {
-				case message.UERRCSetupSuccess:
-				case message.UERRCSetupReject:
+				case message.UERegistrationSuccess:
+					logger.ControllerLog.Infof("UE %v registration successed", currentUE.SUPI())
 				}
 			}
 

@@ -42,7 +42,7 @@ func (u *UE) handleRRCSetupMessage(msg message.RRCSetup) {
 	u.logger.Debugf("Handle message RRCSetup")
 	u.rrcFSM.Event(eventRRCSetup)
 	u.sendRRCSetupCompleteMessage(u.gnb.Name)
-	u.Notify <- message.UERRCSetupSuccess{}
+	//u.Notify <- message.UERRCSetupSuccess{}
 }
 
 func (u *UE) handleRRCRejectMessage(msg message.RRCReject) {
@@ -119,16 +119,17 @@ func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
 			security.Bearer3GPP,
 			security.DirectionDownlink, payload)
 		if err != nil {
-			u.nasLogger.Info("NAS MAC calculate error")
+			u.nasLogger.Errorf("NAS MAC calculate error")
 			return
 		}
+		u.nasLogger.Tracef("NAS MAC is:\n%v", hex.Dump(mac32))
 
 		// check integrity
 		if !reflect.DeepEqual(mac32, macReceived) {
-			u.nasLogger.Info("NAS MAC verification failed(received:", macReceived, "expected:", mac32)
+			u.nasLogger.Errorf("NAS MAC verification failed(received: \n%v, expected: \n%v", hex.Dump(macReceived), hex.Dump(mac32))
 			return
 		} else {
-			u.nasLogger.Info("successful NAS MAC verification")
+			u.nasLogger.Debugf("successful NAS MAC verification")
 		}
 
 		// check ciphering.
@@ -138,7 +139,7 @@ func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
 				u.nasLogger.Info("error in encrypt algorithm")
 				return
 			} else {
-				u.nasLogger.Info("[UE][NAS] successful NAS CIPHERING")
+				u.nasLogger.Debugf("successful NAS CIPHERING")
 			}
 		}
 
@@ -162,7 +163,7 @@ func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
 	case nas.MsgTypeSecurityModeCommand:
 		u.handleSecurityModeCommand(decodedMsg)
 	case nas.MsgTypeRegistrationAccept:
-		u.nasLogger.Info("registration accepted")
+		u.nasLogger.Debugf("registration accepted")
 		u.handleRegistrationAccept(decodedMsg)
 	default:
 		u.nasLogger.Errorf("unsupported message type %v", decodedMsg.GmmMessage.GetMessageType())

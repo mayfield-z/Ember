@@ -64,3 +64,20 @@ func DecodePLMNFromNgap(plmn ngapType.PLMNIdentity) PLMN {
 	}
 	return p
 }
+
+func EncodeMsin(msin string) []byte {
+	var ret []byte
+	encoded, _ := hex.DecodeString(reverse(msin))
+	for _, b := range encoded {
+		ret = append([]byte{b}, ret...)
+	}
+	return ret
+}
+
+func reverse(s string) string {
+	ret := ""
+	for _, i := range s {
+		ret = string(i) + ret
+	}
+	return ret
+}

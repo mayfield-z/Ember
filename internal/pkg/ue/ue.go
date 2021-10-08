@@ -167,6 +167,7 @@ func (u *UE) Copy(supi string, id uint8) *UE {
 	u.id = id
 	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
+	ue.Notify = make(chan interface{})
 	mqueue.NewQueue(supi)
 	return &ue
 }

@@ -114,7 +114,7 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 		logger.NgapLog.Errorln("NGSetupResponse is nil")
 		return
 	}
-	logger.NgapLog.Infof("Handle NG Setup response")
+	logger.NgapLog.Debugf("Handle NG Setup response")
 	for _, ie := range nGSetupResponse.ProtocolIEs.List {
 		switch ie.Id.Value {
 		case ngapType.ProtocolIEIDAMFName:
@@ -185,7 +185,7 @@ func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {
 		logger.NgapLog.Errorln("downlinkNasTransport is nil")
 		return
 	}
-	logger.NgapLog.Infof("Handle downlinkNas Transport")
+	logger.NgapLog.Debugf("Handle DownlinkNas Transport")
 	for _, ie := range downlinkNasTransport.ProtocolIEs.List {
 		switch ie.Id.Value {
 		case ngapType.ProtocolIEIDSourceAMFUENGAPID:
@@ -229,7 +229,7 @@ func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
 		logger.NgapLog.Errorln("initialContextSetupRequest is nil")
 		return
 	}
-	logger.NgapLog.Info("Handle initial context setup request")
+	logger.NgapLog.Debugf("Handle initial context setup request")
 	for _, ie := range initialContextSetupRequest.ProtocolIEs.List {
 		switch ie.Id.Value {
 		// TODO: more case

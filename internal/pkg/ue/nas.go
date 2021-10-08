@@ -33,7 +33,9 @@ func (u *UE) buildRegistrationRequest(capability bool) ([]byte, error) {
 
 	// 5GS mobile identity
 	mobileIdentity5GS := append([]uint8{0x01}, utils.EncodePLMNToNgap(u.plmn).Value...)
-	mobileIdentity5GS = append(mobileIdentity5GS, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00)
+	msin := utils.EncodeMsin(u.supi[len(u.supi)-10 : len(u.supi)])
+	msin = append([]uint8{0x00, 0x00, 0x00, 0x00}, msin...)
+	mobileIdentity5GS = append(mobileIdentity5GS, msin...)
 	registrationRequest.MobileIdentity5GS.SetLen(uint16(len(mobileIdentity5GS)))
 	registrationRequest.MobileIdentity5GS.SetMobileIdentity5GSContents(mobileIdentity5GS)
 	registrationRequest.UESecurityCapability = new(nasType.UESecurityCapability)
@@ -106,7 +108,7 @@ func (u *UE) handleAuthenticationRequest(msg *nas.Message) {
 		u.nasLogger.Warnf("Authentication request message failed with SQN failure")
 		// TODO: change state of UE, send response
 	case successful:
-		u.nasLogger.Infof("Send authentication response")
+		u.nasLogger.Debugf("Send authentication response")
 		authenticationResponse.PDU, err = u.buildAuthenticationResponse(paramAutn, "")
 		u.nasLogger.Tracef("authentication response is:\n %+v", hex.Dump(authenticationResponse.PDU))
 		if err != nil {
@@ -254,6 +256,7 @@ func (u *UE) handleRegistrationAccept(msg *nas.Message) {
 	}
 
 	mqueue.SendMessage(message.NASUplinkPdu{PDU: registrationComplete, SendBy: u.supi}, u.gnb.Name)
+	u.Notify <- message.UERegistrationSuccess{}
 }
 
 func (u *UE) buildRegistrationComplete() ([]byte, error) {
