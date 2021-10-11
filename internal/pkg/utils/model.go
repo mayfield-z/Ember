@@ -1,5 +1,7 @@
 package utils
 
+import "net"
+
 type PLMN struct {
 	Mcc string
 	Mnc string
@@ -13,10 +15,15 @@ type GnbAmf struct {
 }
 
 type GnbUe struct {
-	SUPI        string
-	PLMN        PLMN
-	AMFUENGAPID int64
-	RANUENGAPID int64
+	SUPI                  string
+	PLMN                  PLMN
+	AMFUENGAPID           int64
+	RANUENGAPID           int64
+	PDUSessionID          int64
+	QosFlowIdentifier     int64
+	FiveQI                int64
+	GTPTEID               []byte
+	TransportLayerAddress net.IP
 }
 
 type SNSSAI struct {
@@ -38,6 +45,7 @@ const (
 )
 
 type PDU struct {
+	Id     uint8
 	IpType IpVersion
 	Apn    string
 	Nssai  SNSSAI

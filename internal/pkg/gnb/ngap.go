@@ -188,7 +188,7 @@ func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {
 	logger.NgapLog.Debugf("Handle DownlinkNas Transport")
 	for _, ie := range downlinkNasTransport.ProtocolIEs.List {
 		switch ie.Id.Value {
-		case ngapType.ProtocolIEIDSourceAMFUENGAPID:
+		case ngapType.ProtocolIEIDAMFUENGAPID:
 			aMFUENGAPID = ie.Value.AMFUENGAPID
 			logger.NgapLog.Traceln("Handle IE AMFUENGAPID")
 			if aMFUENGAPID == nil {
@@ -211,11 +211,11 @@ func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {
 				logger.NgapLog.Errorln("NASPDU is nil")
 				return
 			}
-			g.sendNASDownlinkPdu(gnbue.SUPI, nASPDU.Value)
 		}
-		gnbue = g.FindUEByRANUENGAPID(rANUENGAPIDValue)
-		gnbue.AMFUENGAPID = aMFUENGAPIDValue
 	}
+	gnbue = g.FindUEByRANUENGAPID(rANUENGAPIDValue)
+	gnbue.AMFUENGAPID = aMFUENGAPIDValue
+	g.sendNASDownlinkPdu(gnbue.SUPI, nASPDU.Value)
 }
 
 func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
@@ -254,6 +254,94 @@ func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
 	_, err = g.sctpConn.Write(initialContextSetupResponse)
 	if err != nil {
 		logger.SctpLog.Errorln("initial context setup response send failed")
+	}
+	mqueue.SendMessage(message.NASDownlinkPdu{PDU: nasPdu}, ue.SUPI)
+}
+
+func (g *GNB) handlePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) {
+	var (
+		aMFUENGAPID           int64
+		rANUENGAPID           int64
+		pduSessionID          int64
+		qosFlowIdentifier     int64
+		fiveQI                int64
+		nasPdu                []byte
+		gTPTEID               []byte
+		transportLayerAddress net.IP
+	)
+
+	pduSessionResourceSetupRequest := pdu.InitiatingMessage.Value.PDUSessionResourceSetupRequest
+	if pduSessionResourceSetupRequest == nil {
+		logger.NgapLog.Errorln("PDUSessionResourceSetupRequest is nil")
+		return
+	}
+	logger.NgapLog.Debugf("Handle PDU Session Resource Setup Request")
+	for _, ie := range pduSessionResourceSetupRequest.ProtocolIEs.List {
+		switch ie.Id.Value {
+		case ngapType.ProtocolIEIDAMFUENGAPID:
+			aMFUENGAPID = ie.Value.AMFUENGAPID.Value
+		case ngapType.ProtocolIEIDRANUENGAPID:
+			rANUENGAPID = ie.Value.RANUENGAPID.Value
+		case ngapType.ProtocolIEIDPDUSessionResourceSetupListSUReq:
+			// TODO:
+			//for _, req := range ie.Value.PDUSessionResourceSetupListSUReq.List {
+			//
+			//}
+			req := ie.Value.PDUSessionResourceSetupListSUReq.List[0]
+			pduSessionID = req.PDUSessionID.Value
+			nasPdu = req.PDUSessionNASPDU.Value
+			pduSessionResourceSetupRequestTransfer := &ngapType.PDUSessionResourceSetupRequestTransfer{}
+			err := aper.UnmarshalWithParams(req.PDUSessionResourceSetupRequestTransfer, pduSessionResourceSetupRequestTransfer, "valueExt")
+			if err != nil {
+				g.logger.Errorf("Decode PDU Session Resource Setup Request Transfer failed")
+			} else {
+				for _, ie := range pduSessionResourceSetupRequestTransfer.ProtocolIEs.List {
+					switch ie.Id.Value {
+					case ngapType.ProtocolIEIDULNGUUPTNLInformation:
+						gTPTEID = ie.Value.ULNGUUPTNLInformation.GTPTunnel.GTPTEID.Value
+						addr := ie.Value.ULNGUUPTNLInformation.GTPTunnel.TransportLayerAddress.Value.Bytes
+						if len(addr) == 4 {
+							transportLayerAddress = net.IPv4(addr[0], addr[1], addr[2], addr[3])
+						} else {
+							g.logger.Errorf("TransportLayerAddress len is %v", len(addr))
+							break
+						}
+					case ngapType.ProtocolIEIDPDUSessionType:
+					case ngapType.ProtocolIEIDQosFlowSetupRequestList:
+						// TODO:
+						//for _, item := range ie.Value.QosFlowSetupRequestList.List {
+						//
+						//}
+						qosFlowSetupRequest := ie.Value.QosFlowSetupRequestList.List[0]
+						qosFlowIdentifier = qosFlowSetupRequest.QosFlowIdentifier.Value
+						if qosFlowSetupRequest.QosFlowLevelQosParameters.QosCharacteristics.NonDynamic5QI != nil {
+							fiveQI = qosFlowSetupRequest.QosFlowLevelQosParameters.QosCharacteristics.NonDynamic5QI.FiveQI.Value
+						} else {
+							fiveQI = qosFlowSetupRequest.QosFlowLevelQosParameters.QosCharacteristics.Dynamic5QI.FiveQI.Value
+						}
+					}
+				}
+			}
+		}
+	}
+	ue := g.FindUEByRANUENGAPID(rANUENGAPID)
+	if ue.AMFUENGAPID != aMFUENGAPID {
+		g.logger.Errorf("AMFUENGAPID not match")
+	}
+	ue.PDUSessionID = pduSessionID
+	ue.QosFlowIdentifier = qosFlowIdentifier
+	ue.FiveQI = fiveQI
+	ue.GTPTEID = gTPTEID
+	ue.TransportLayerAddress = transportLayerAddress
+
+	p, err := g.buildPDUSessionResourceSetupResponse(ue)
+	if err != nil {
+		g.logger.Errorln(err)
+		return
+	}
+	_, err = g.sctpConn.Write(p)
+	if err != nil {
+		g.logger.Errorf("send PDU Session Resource Setup Response failed. %v", err)
 	}
 	mqueue.SendMessage(message.NASDownlinkPdu{PDU: nasPdu}, ue.SUPI)
 }
@@ -537,6 +625,71 @@ func (g *GNB) buildInitialContextSetupResponse(ue *utils.GnbUe) ([]byte, error) 
 	rANUENGAPID.Value = ue.RANUENGAPID
 
 	initialContextSetupResponseIEs.List = append(initialContextSetupResponseIEs.List, ie)
+
+	return ngap.Encoder(pdu)
+}
+
+func (g *GNB) buildPDUSessionResourceSetupResponse(ue *utils.GnbUe) ([]byte, error) {
+	var pdu ngapType.NGAPPDU
+	pdu.Present = ngapType.NGAPPDUPresentSuccessfulOutcome
+	pdu.SuccessfulOutcome = new(ngapType.SuccessfulOutcome)
+
+	successfulOutcome := pdu.SuccessfulOutcome
+	successfulOutcome.ProcedureCode.Value = ngapType.ProcedureCodePDUSessionResourceSetup
+	successfulOutcome.Criticality.Value = ngapType.CriticalityPresentReject
+	successfulOutcome.Value.Present = ngapType.SuccessfulOutcomePresentPDUSessionResourceSetupResponse
+	successfulOutcome.Value.PDUSessionResourceSetupResponse = new(ngapType.PDUSessionResourceSetupResponse)
+
+	pduSessionResourceSetupResponse := successfulOutcome.Value.PDUSessionResourceSetupResponse
+	pduSessionResourceSetupResponseIEs := &pduSessionResourceSetupResponse.ProtocolIEs
+
+	// AMFUENGAPID
+	ie := ngapType.PDUSessionResourceSetupResponseIEs{}
+	ie.Id.Value = ngapType.ProtocolIEIDAMFUENGAPID
+	ie.Criticality.Value = ngapType.CriticalityPresentIgnore
+	ie.Value.Present = ngapType.PDUSessionResourceSetupResponseIEsPresentAMFUENGAPID
+	ie.Value.AMFUENGAPID = new(ngapType.AMFUENGAPID)
+	ie.Value.AMFUENGAPID.Value = ue.AMFUENGAPID
+	pduSessionResourceSetupResponseIEs.List = append(pduSessionResourceSetupResponseIEs.List, ie)
+
+	// RANUENGAPID
+	ie = ngapType.PDUSessionResourceSetupResponseIEs{}
+	ie.Id.Value = ngapType.ProtocolIEIDRANUENGAPID
+	ie.Criticality.Value = ngapType.CriticalityPresentIgnore
+	ie.Value.Present = ngapType.PDUSessionResourceSetupResponseIEsPresentRANUENGAPID
+	ie.Value.RANUENGAPID = new(ngapType.RANUENGAPID)
+	ie.Value.RANUENGAPID.Value = ue.RANUENGAPID
+	pduSessionResourceSetupResponseIEs.List = append(pduSessionResourceSetupResponseIEs.List, ie)
+
+	// PDUSessionResourceSetupListSURes
+	ie = ngapType.PDUSessionResourceSetupResponseIEs{}
+	ie.Id.Value = ngapType.ProtocolIEIDPDUSessionResourceSetupListSURes
+	ie.Criticality.Value = ngapType.CriticalityPresentIgnore
+	ie.Value.Present = ngapType.PDUSessionResourceSetupResponseIEsPresentPDUSessionResourceSetupListSURes
+	ie.Value.PDUSessionResourceSetupListSURes = new(ngapType.PDUSessionResourceSetupListSURes)
+
+	listSURes := ie.Value.PDUSessionResourceSetupListSURes
+	pduSessionResourcesSetupItemSURes := new(ngapType.PDUSessionResourceSetupItemSURes)
+	pduSessionResourcesSetupItemSURes.PDUSessionID.Value = ue.PDUSessionID
+	pduSessionResourceSetupResponseTransfer := new(ngapType.PDUSessionResourceSetupResponseTransfer)
+	upTransportLayerInformation := &pduSessionResourceSetupResponseTransfer.DLQosFlowPerTNLInformation.UPTransportLayerInformation
+	upTransportLayerInformation.Present = ngapType.UPTransportLayerInformationPresentGTPTunnel
+	upTransportLayerInformation.GTPTunnel = new(ngapType.GTPTunnel)
+	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.Bytes = ue.TransportLayerAddress[12:16]
+	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.BitLength = 32
+	upTransportLayerInformation.GTPTunnel.GTPTEID.Value = ue.GTPTEID
+
+	associatedQosFlowItem := new(ngapType.AssociatedQosFlowItem)
+	associatedQosFlowItem.QosFlowIdentifier.Value = ue.QosFlowIdentifier
+	pduSessionResourceSetupResponseTransfer.DLQosFlowPerTNLInformation.AssociatedQosFlowList.List = append(pduSessionResourceSetupResponseTransfer.DLQosFlowPerTNLInformation.AssociatedQosFlowList.List, *associatedQosFlowItem)
+	pduSessionResourceSetupResponseTransferData, err := aper.MarshalWithParams(pduSessionResourceSetupResponseTransfer, "valueExt")
+	if err != nil {
+		return nil, errors.WithMessage(err, "build PDUSessionResourceSetupResponse failed")
+	}
+	pduSessionResourcesSetupItemSURes.PDUSessionResourceSetupResponseTransfer = pduSessionResourceSetupResponseTransferData
+	listSURes.List = append(listSURes.List, *pduSessionResourcesSetupItemSURes)
+
+	pduSessionResourceSetupResponseIEs.List = append(pduSessionResourceSetupResponseIEs.List, ie)
 
 	return ngap.Encoder(pdu)
 }

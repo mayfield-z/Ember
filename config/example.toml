@@ -8,9 +8,9 @@ logLevel = "trace"
 [controller]
 n2IpFrom = "10.100.0.1"
 n2IpTo = "10.100.0.1"
-ueNum = 5
-uePerGnb = 10000
-uePerSec = 5
+ueNum = 1
+uePerGnb = 20000
+uePerSec = 1
 initPDUWhenAllUERegistered = false
 
 [gnb]

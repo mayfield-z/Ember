@@ -160,11 +160,15 @@ func (u *UE) SetSUPI(supi string) {
 	mqueue.NewQueue(supi)
 }
 
-func (u *UE) Copy(supi string, id uint8) *UE {
+func (u *UE) Copy(supi string, ueId uint8, sessionId uint8) *UE {
 	// TODO: check source ue state
 	ue := *u
 	ue.supi = supi
-	u.id = id
+	ue.id = ueId
+	for _, session := range ue.pduSessions {
+		session.Id = sessionId
+		sessionId += 1
+	}
 	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	ue.Notify = make(chan interface{})
@@ -176,13 +180,32 @@ func (u *UE) getMessageChan() chan interface{} {
 	return mqueue.GetMessageChan(u.supi)
 }
 
+func (u *UE) GetPDUSessionNum() uint8 {
+	return uint8(len(u.pduSessions))
+}
+
 func (u *UE) Run() {
 	u.logger.Debugf("UE run")
 	go u.messageHandler()
 	u.running = true
 }
 
+func (u *UE) EstablishPDUSession(pduSessionNumber uint8) {
+	u.logger.Tracef("EstablishPDUSession(%v)", pduSessionNumber)
+	if pduSessionNumber >= u.GetPDUSessionNum() {
+		u.logger.Errorf("chose No.%v session, only have %v sessions", pduSessionNumber, u.GetPDUSessionNum())
+		return
+	}
+	data, err := u.buildULNasTransportPDUSessionEstablishmentRequest(pduSessionNumber)
+	if err != nil {
+		u.logger.Errorf("Establish PDU Session failed: %v", err)
+		return
+	}
+	mqueue.SendMessage(message.NASUplinkPdu{PDU: data, SendBy: u.supi}, u.gnb.Name)
+}
+
 func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
+	u.logger.Tracef("RRCSetupRequest(%v)", gnb.NodeName())
 	if !u.running {
 		u.logger.Errorf("UE %v not start but want rrc setup", u.supi)
 	}

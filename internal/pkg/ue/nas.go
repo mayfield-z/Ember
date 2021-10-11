@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/free5gc/nas"
+	"github.com/free5gc/nas/nasConvert"
 	"github.com/free5gc/nas/nasMessage"
 	"github.com/free5gc/nas/nasType"
 	"github.com/free5gc/nas/security"
@@ -283,6 +284,103 @@ func (u *UE) buildRegistrationComplete() ([]byte, error) {
 	pdu, err = u.encodeNASPduWithSecurity(pdu, false, nas.SecurityHeaderTypeIntegrityProtectedAndCiphered)
 	if err != nil {
 		return nil, errors.WithMessage(err, "build registration complete failed")
+	}
+
+	return pdu, nil
+}
+
+func (u *UE) buildPDUSessionEstablishmentRequest(id uint8) ([]byte, error) {
+	m := nas.NewMessage()
+	m.GsmMessage = nas.NewGsmMessage()
+	m.GsmHeader.SetMessageType(nas.MsgTypePDUSessionEstablishmentRequest)
+
+	pduSessionEstablishmentRequest := nasMessage.NewPDUSessionEstablishmentRequest(0)
+	pduSessionEstablishmentRequest.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(nasMessage.Epd5GSSessionManagementMessage)
+	pduSessionEstablishmentRequest.SetMessageType(nas.MsgTypePDUSessionEstablishmentRequest)
+	pduSessionEstablishmentRequest.PDUSessionID.SetPDUSessionID(id)
+	pduSessionEstablishmentRequest.PTI.SetPTI(0x00)
+	pduSessionEstablishmentRequest.IntegrityProtectionMaximumDataRate.SetMaximumDataRatePerUEForUserPlaneIntegrityProtectionForDownLink(0xff)
+	pduSessionEstablishmentRequest.IntegrityProtectionMaximumDataRate.SetMaximumDataRatePerUEForUserPlaneIntegrityProtectionForUpLink(0xff)
+
+	pduSessionEstablishmentRequest.PDUSessionType = nasType.NewPDUSessionType(nasMessage.PDUSessionEstablishmentRequestPDUSessionTypeType)
+	pduSessionEstablishmentRequest.PDUSessionType.SetPDUSessionTypeValue(uint8(0x01)) //IPv4 type
+
+	pduSessionEstablishmentRequest.ExtendedProtocolConfigurationOptions = nasType.NewExtendedProtocolConfigurationOptions(nasMessage.PDUSessionEstablishmentRequestExtendedProtocolConfigurationOptionsType)
+	protocolConfigurationOptions := nasConvert.NewProtocolConfigurationOptions()
+	protocolConfigurationOptions.AddIPAddressAllocationViaNASSignallingUL()
+	protocolConfigurationOptions.AddDNSServerIPv4AddressRequest()
+	protocolConfigurationOptions.AddDNSServerIPv6AddressRequest()
+	pcoContents := protocolConfigurationOptions.Marshal()
+	pcoContentsLength := len(pcoContents)
+	pduSessionEstablishmentRequest.ExtendedProtocolConfigurationOptions.SetLen(uint16(pcoContentsLength))
+	pduSessionEstablishmentRequest.ExtendedProtocolConfigurationOptions.SetExtendedProtocolConfigurationOptionsContents(pcoContents)
+
+	m.GsmMessage.PDUSessionEstablishmentRequest = pduSessionEstablishmentRequest
+
+	data := new(bytes.Buffer)
+	err := m.GsmMessageEncode(data)
+	if err != nil {
+		return nil, errors.WithMessage(err, "PDU session establishment request failed")
+	}
+
+	pdu := data.Bytes()
+	return pdu, nil
+}
+
+func (u *UE) buildULNasTransportPDUSessionEstablishmentRequest(pduSessionNumber uint8) ([]byte, error) {
+	pduSession := u.pduSessions[pduSessionNumber]
+
+	pdu, err := u.buildPDUSessionEstablishmentRequest(pduSession.Id)
+	if err != nil {
+		return nil, errors.WithMessage(err, "build UL NAS transport PDU Session Establishment Request failed.")
+	}
+
+	m := nas.NewMessage()
+	m.GmmMessage = nas.NewGmmMessage()
+	m.GmmHeader.SetMessageType(nas.MsgTypeULNASTransport)
+
+	ulNasTransport := nasMessage.NewULNASTransport(0)
+	ulNasTransport.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(nas.SecurityHeaderTypePlainNas)
+	ulNasTransport.SetMessageType(nas.MsgTypeULNASTransport)
+	ulNasTransport.ExtendedProtocolDiscriminator.SetExtendedProtocolDiscriminator(nasMessage.Epd5GSMobilityManagementMessage)
+	ulNasTransport.PduSessionID2Value = new(nasType.PduSessionID2Value)
+	ulNasTransport.PduSessionID2Value.SetIei(nasMessage.ULNASTransportPduSessionID2ValueType)
+	ulNasTransport.PduSessionID2Value.SetPduSessionID2Value(pduSession.Id)
+	ulNasTransport.RequestType = new(nasType.RequestType)
+	ulNasTransport.RequestType.SetIei(nasMessage.ULNASTransportRequestTypeType)
+	ulNasTransport.RequestType.SetRequestTypeValue(nasMessage.ULNASTransportRequestTypeInitialRequest)
+
+	dnn := []byte(pduSession.Apn)
+	ulNasTransport.DNN = new(nasType.DNN)
+	ulNasTransport.DNN.SetIei(nasMessage.ULNASTransportDNNType)
+	ulNasTransport.DNN.SetLen(uint8(len(dnn)))
+	ulNasTransport.DNN.SetDNN(dnn)
+
+	ulNasTransport.SNSSAI = nasType.NewSNSSAI(nasMessage.ULNASTransportSNSSAIType)
+	ulNasTransport.SNSSAI.SetLen(4)
+	var sdTemp [3]uint8
+	sd := utils.EncodeUint32(pduSession.Nssai.Sd, 24)
+	copy(sdTemp[:], sd)
+	ulNasTransport.SNSSAI.SetSST(pduSession.Nssai.Sst)
+	ulNasTransport.SNSSAI.SetSD(sdTemp)
+
+	ulNasTransport.SpareHalfOctetAndPayloadContainerType.SetPayloadContainerType(nasMessage.PayloadContainerTypeN1SMInfo)
+	ulNasTransport.PayloadContainer.SetLen(uint16(len(pdu)))
+	ulNasTransport.PayloadContainer.SetPayloadContainerContents(pdu)
+
+	m.GmmMessage.ULNASTransport = ulNasTransport
+
+	data := new(bytes.Buffer)
+	err = m.GmmMessageEncode(data)
+	if err != nil {
+		return nil, err
+	}
+
+	pdu = data.Bytes()
+
+	pdu, err = u.encodeNASPduWithSecurity(pdu, false, nas.SecurityHeaderTypeIntegrityProtectedAndCiphered)
+	if err != nil {
+		return nil, err
 	}
 
 	return pdu, nil

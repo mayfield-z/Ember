@@ -120,9 +120,9 @@ func (g *GNB) sctpHandler(bufsize uint32) {
 			buf := make([]byte, bufsize)
 
 			n, info, notification, err := conn.SCTPRead(buf)
-			logger.NgapLog.Tracef("Read %d bytes", n)
-			logger.NgapLog.Tracef("Packet content:\n%+v", hex.Dump(buf[:n]))
 			if err != nil {
+				logger.NgapLog.Tracef("Read %d bytes", n)
+				logger.NgapLog.Tracef("Packet content:\n%+v", hex.Dump(buf[:n]))
 				switch err {
 				case io.EOF, io.ErrUnexpectedEOF:
 					logger.SctpLog.Debugln("Read EOF from client")
@@ -176,6 +176,8 @@ func (g *GNB) ngapHandler(buf []byte) {
 			g.handleDownlinkNASTransport(pdu)
 		case ngapType.ProcedureCodeInitialContextSetup:
 			g.handleInitialContextSetupRequest(pdu)
+		case ngapType.ProcedureCodePDUSessionResourceSetup:
+			g.handlePDUSessionResourceSetupRequest(pdu)
 		}
 	case ngapType.NGAPPDUPresentSuccessfulOutcome:
 		successfulOutcome := pdu.SuccessfulOutcome

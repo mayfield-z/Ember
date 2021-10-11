@@ -50,6 +50,7 @@ type Controller struct {
 	supiPointer            string
 	n2IpPointer            net.IP
 	ueIdPointer            uint8
+	pduSessionIdPointer    uint8
 	globalRANNodeIDPointer uint32
 	nrCellIdentityPointer  uint64
 
@@ -83,6 +84,7 @@ func (c *Controller) Init(configPath string) error {
 	c.globalRANNodeIDPointer = 1
 	c.nrCellIdentityPointer = 1
 	c.ueIdPointer = 1
+	c.pduSessionIdPointer = 1
 	c.configPath = configPath
 
 	err := c.parseConfig(configPath)
@@ -263,6 +265,7 @@ func (c *Controller) start() {
 					logger.ControllerLog.Infof("UE %v registration successed", currentUE.SUPI())
 				}
 			}
+			currentUE.EstablishPDUSession(0)
 
 			// start registration
 
@@ -298,7 +301,7 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 
 func (c *Controller) createAndAddUE() *ue.UE {
 	logger.ControllerLog.Infof("Creating UE: %v", c.supiPointer)
-	ue := c.templateUE.Copy(c.supiPointer, c.ueIdPointer)
+	ue := c.templateUE.Copy(c.supiPointer, c.ueIdPointer, c.pduSessionIdPointer)
 	imsi, err := strconv.ParseUint(strings.Split(c.supiPointer, "-")[1], 10, 64)
 	if err != nil {
 		logger.ControllerLog.Errorf("create ue failed: %+v", err)
@@ -306,7 +309,7 @@ func (c *Controller) createAndAddUE() *ue.UE {
 	}
 	c.supiPointer = fmt.Sprintf("imsi-%v", imsi+1)
 	c.ueIdPointer += 1
-
+	c.pduSessionIdPointer += ue.GetPDUSessionNum()
 	c.addUE(ue)
 	return ue
 }
