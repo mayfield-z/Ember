@@ -88,6 +88,7 @@ func Dial(ip net.IP, port int) (*sctp.SCTPConn, error) {
 }
 
 func (g *GNB) sendInitialUEMessage(id int64, nas []byte) error {
+	g.logger.Debugf("send InitialUEMessage")
 	initialUEMessage, err := g.buildInitialUEMessage(id, nas)
 	if err != nil {
 		return errors.WithMessagef(err, "InitialUEMessage PDU build failed.")
@@ -101,6 +102,7 @@ func (g *GNB) sendInitialUEMessage(id int64, nas []byte) error {
 }
 
 func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
+	g.logger.Debugf("handle NGSetupResponse")
 	var (
 		aMFName             *ngapType.AMFName
 		servedGUAMIList     *ngapType.ServedGUAMIList
@@ -119,7 +121,6 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 		switch ie.Id.Value {
 		case ngapType.ProtocolIEIDAMFName:
 			aMFName = ie.Value.AMFName
-			logger.NgapLog.Traceln("Handle IE AMFName")
 			if aMFName == nil {
 				logger.NgapLog.Errorln("AMFName is nil")
 				return
@@ -127,7 +128,6 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 			g.gnbAmf.AmfName = aMFName.Value
 		case ngapType.ProtocolIEIDServedGUAMIList:
 			servedGUAMIList = ie.Value.ServedGUAMIList
-			logger.NgapLog.Traceln("Handle IE GUAMIList")
 			if servedGUAMIList == nil {
 				logger.NgapLog.Errorln("ServedGUAMIList is nil")
 			}
@@ -145,7 +145,6 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 			g.gnbAmf.GUAMI.AmfId = amfId
 		case ngapType.ProtocolIEIDRelativeAMFCapacity:
 			relativeAMFCapacity = ie.Value.RelativeAMFCapacity
-			logger.NgapLog.Traceln("Handle IE RelativeAMFCapacity")
 			if relativeAMFCapacity == nil {
 				logger.NgapLog.Errorln("RelativeAMFCapacity is nil")
 			}
@@ -167,10 +166,12 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 
 func (g *GNB) handleNGSetupFailure(pdu *ngapType.NGAPPDU) {
 	// TODO: implement
+	g.logger.Debugf("handle NGSetupFailure")
 	g.gnbAmf.Connected = false
 }
 
 func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {
+	g.logger.Debugf("handle DownlinkNASTransport")
 	var (
 		aMFUENGAPID      *ngapType.AMFUENGAPID
 		rANUENGAPID      *ngapType.RANUENGAPID
@@ -219,6 +220,7 @@ func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {
 }
 
 func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
+	g.logger.Debugf("handle InitialContextSetupRequest")
 	var (
 		//aMFUENGAPIDValue int64
 		rANUENGAPIDValue int64
@@ -259,6 +261,7 @@ func (g *GNB) handleInitialContextSetupRequest(pdu *ngapType.NGAPPDU) {
 }
 
 func (g *GNB) handlePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) {
+	g.logger.Debugf("handle PDUSessionResourceSetupRequest")
 	var (
 		aMFUENGAPID           int64
 		rANUENGAPID           int64
@@ -348,6 +351,7 @@ func (g *GNB) handlePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) {
 
 // buildNGSetupRequest referring to TS 38.413 -> 9.2.6.1
 func (g *GNB) buildNGSetupRequest() ([]byte, error) {
+	g.logger.Debugf("build NGSetupRequest")
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
 	pdu.InitiatingMessage = new(ngapType.InitiatingMessage)
@@ -434,7 +438,9 @@ func (g *GNB) buildNGSetupRequest() ([]byte, error) {
 }
 
 func (g *GNB) buildInitialUEMessage(id int64, nas []byte) ([]byte, error) {
+	g.logger.Debugf("build InitialUEMessage")
 	ue := g.FindUEByRANUENGAPID(id)
+	g.logger.Tracef("ue is %V", ue)
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
 	pdu.InitiatingMessage = new(ngapType.InitiatingMessage)
@@ -518,6 +524,8 @@ func (g *GNB) buildInitialUEMessage(id int64, nas []byte) ([]byte, error) {
 }
 
 func (g *GNB) buildUplinkNASTransport(ue *utils.GnbUe, nas []byte) ([]byte, error) {
+	g.logger.Debugf("build UplinkNASTransport")
+	g.logger.Tracef("UE is %V", *ue)
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentInitiatingMessage
 	pdu.InitiatingMessage = new(ngapType.InitiatingMessage)
@@ -589,6 +597,7 @@ func (g *GNB) buildUplinkNASTransport(ue *utils.GnbUe, nas []byte) ([]byte, erro
 }
 
 func (g *GNB) buildInitialContextSetupResponse(ue *utils.GnbUe) ([]byte, error) {
+	g.logger.Debugf("build InitialContextSetupResponse")
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentSuccessfulOutcome
 	pdu.SuccessfulOutcome = new(ngapType.SuccessfulOutcome)
@@ -630,6 +639,7 @@ func (g *GNB) buildInitialContextSetupResponse(ue *utils.GnbUe) ([]byte, error) 
 }
 
 func (g *GNB) buildPDUSessionResourceSetupResponse(ue *utils.GnbUe) ([]byte, error) {
+	g.logger.Debugf("build PDUSessionResourceSetupResponse")
 	var pdu ngapType.NGAPPDU
 	pdu.Present = ngapType.NGAPPDUPresentSuccessfulOutcome
 	pdu.SuccessfulOutcome = new(ngapType.SuccessfulOutcome)

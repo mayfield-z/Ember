@@ -9,6 +9,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"net"
+	"sync"
 )
 
 const (
@@ -30,16 +31,17 @@ type GNB struct {
 	snssai          utils.SNSSAI
 
 	// auto
-	ueMapBySupi        map[string]*utils.GnbUe
-	ueMapByRANUENGAPID map[int64]*utils.GnbUe
-	rANUENGAPIDPointer int64
-	running            bool
-	gnbAmf             utils.GnbAmf
-	sctpConn           *sctp.SCTPConn
-	Notify             chan interface{}
-	logger             *logrus.Entry
-	ctx                context.Context
-	cancelFunc         context.CancelFunc
+	ueMapBySupi             sync.Map //map[string]*utils.GnbUe
+	ueMapByRANUENGAPID      sync.Map //map[int64]*utils.GnbUe
+	rANUENGAPIDPointer      int64
+	rANUENGAPIDPointerMutex sync.Mutex
+	running                 bool
+	gnbAmf                  utils.GnbAmf
+	sctpConn                *sctp.SCTPConn
+	Notify                  chan interface{}
+	logger                  *logrus.Entry
+	ctx                     context.Context
+	cancelFunc              context.CancelFunc
 }
 
 func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, amfAddress net.IP, amfPort int, sst uint8, sd uint32, parent context.Context) *GNB {
@@ -62,14 +64,12 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 			Sst: sst,
 			Sd:  sd,
 		},
-		ueMapBySupi:        make(map[string]*utils.GnbUe),
-		ueMapByRANUENGAPID: make(map[int64]*utils.GnbUe),
-		running:            false,
-		sctpConn:           nil,
-		Notify:             make(chan interface{}, 1),
-		logger:             logger.GnbLog.WithFields(logrus.Fields{"name": name}),
-		ctx:                ctx,
-		cancelFunc:         cancelFunc,
+		running:    false,
+		sctpConn:   nil,
+		Notify:     make(chan interface{}, 1),
+		logger:     logger.GnbLog.WithFields(logrus.Fields{"name": name}),
+		ctx:        ctx,
+		cancelFunc: cancelFunc,
 	}
 }
 
@@ -121,15 +121,15 @@ func (g *GNB) getMessageChan() chan interface{} {
 }
 
 func (g *GNB) FindUEBySUPI(supi string) *utils.GnbUe {
-	if ue, ok := g.ueMapBySupi[supi]; ok {
-		return ue
+	if ue, ok := g.ueMapBySupi.Load(supi); ok {
+		return ue.(*utils.GnbUe)
 	}
 	return nil
 }
 
-func (g GNB) FindUEByRANUENGAPID(id int64) *utils.GnbUe {
-	if ue, ok := g.ueMapByRANUENGAPID[id]; ok {
-		return ue
+func (g *GNB) FindUEByRANUENGAPID(id int64) *utils.GnbUe {
+	if ue, ok := g.ueMapByRANUENGAPID.Load(id); ok {
+		return ue.(*utils.GnbUe)
 	}
 	return nil
 }
@@ -182,6 +182,8 @@ func (g *GNB) sendNGSetupRequestPDU() error {
 
 func (g *GNB) allocateRANUENGAPID() int64 {
 	rANUENGAPID := int64(-1)
+	g.rANUENGAPIDPointerMutex.Lock()
+	defer g.rANUENGAPIDPointerMutex.Unlock()
 	for i := g.rANUENGAPIDPointer; i < rANUENGAPIDMax; i++ {
 		if g.FindUEByRANUENGAPID(i) == nil {
 			rANUENGAPID = i

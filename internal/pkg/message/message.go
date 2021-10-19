@@ -46,6 +46,5 @@ type UERegistrationSuccess struct{}
 
 type UERegistrationReject struct{}
 
-//type UEPDUSessionEST struct {
-//
-//}
+type UEPDUSessionEstablishmentAccept struct {
+}

@@ -42,7 +42,6 @@ func (u *UE) handleRRCSetupMessage(msg message.RRCSetup) {
 	u.logger.Debugf("Handle message RRCSetup")
 	u.rrcFSM.Event(eventRRCSetup)
 	u.sendRRCSetupCompleteMessage(u.gnb.Name)
-	//u.Notify <- message.UERRCSetupSuccess{}
 }
 
 func (u *UE) handleRRCRejectMessage(msg message.RRCReject) {
@@ -165,6 +164,8 @@ func (u *UE) nasHandler(msg message.NASDownlinkPdu) {
 	case nas.MsgTypeRegistrationAccept:
 		u.nasLogger.Debugf("registration accepted")
 		u.handleRegistrationAccept(decodedMsg)
+	case nas.MsgTypeDLNASTransport:
+		u.handleDLNASTransport(decodedMsg)
 	default:
 		u.nasLogger.Errorf("unsupported message type %v", decodedMsg.GmmMessage.GetMessageType())
 	}

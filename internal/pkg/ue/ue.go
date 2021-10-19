@@ -14,23 +14,44 @@ import (
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"net"
 )
 
 const (
-	stateRRCConnected   = "RRC-CONNECTED"
-	stateRRCInactive    = "RRC-INACTIVE"
-	stateRRCIdle        = "RRC-IDLE"
-	stateRMDeregistered = "RM-DEREGISTERED"
-	stateRMRegistered   = "RM-REGISTERED"
-	stateCMIdle         = "CM-IDLE"
-	stateCMConnceted    = "CM-CONNECTED"
+	stateRRCConnected = "RRC_CONNECTED"
+	stateRRCInactive  = "RRC_INACTIVE"
+	stateRRCIdle      = "RRC_IDLE"
 
-	eventRRCSetup                   = "RRC-SETUP-EVENT"
-	eventRRCConnectionRelease       = "RRC-CONNECTION-RELEASE-EVENT"
-	eventRMRegistrationAccept       = "RM-REGISTRATION-ACCEPT-EVENT"
-	eventRMRegistrationReject       = "RM-REGISTRATION-REJECT-EVENT"
-	eventRMDeregistration           = "RM-DEREGISTRATION-EVENT"
-	eventRMRegistrationUpdateAccept = "RM-REGISTRATION-UPDATE-ACCEPT-EVENT"
+	eventRRCSetup             = "RRC_SETUP_EVENT"
+	eventRRCConnectionRelease = "RRC_CONNECTION_RELEASE_EVENT"
+
+	stateRMDeregistered = "RM_DEREGISTERED"
+	stateRMRegistered   = "RM_REGISTERED"
+
+	eventRMRegistrationAccept       = "RM_REGISTRATION_ACCEPT_EVENT"
+	eventRMRegistrationReject       = "RM_REGISTRATION_REJECT_EVENT"
+	eventRMDeregistration           = "RM_DEREGISTRATION_EVENT"
+	eventRMRegistrationUpdateAccept = "RM_REGISTRATION_UPDATE_ACCEPT_EVENT"
+
+	stateCMIdle      = "CM_IDLE"
+	stateCMConnceted = "CM_CONNECTED"
+
+	stateSMPDUSessionInactive            = "PDU_SESSION_INACTIVE"
+	stateSMPDUSessionInactivePending     = "PDU_SESSION_INACTIVE_PENDING"
+	stateSMPDUSessionActive              = "PDU_SESSION_ACTIVE"
+	stateSMPDUSessionActivePending       = "PDU_SESSION_ACITVE_PENDING"
+	stateSMPDUSessionModificationPending = "PDU_SESSION_MODIFICATION_PENDING"
+
+	eventSMPDUSessionEstablishmentRequest = "PDU_SESSION_ESTABLISHMENT_REQUEST"
+	eventSMPDUSessionEstablishmentAccept  = "PDU_SESSION_ESTABLISHMENT_ACCEPT"
+
+	stateMMDeregistered            = "5GMM_DEREGISTERED"
+	stateMMRegisteredInitiated     = "5GMM_REGISTERED_INITIATED"
+	stateMMRegistered              = "5GMM_REGISTERED"
+	stateMMDeregisteredInitated    = "5GMM_DEREGISTERED_INITIATED"
+	stateMMServiceRequestInitiated = "5GMM_SERVICE_REQUEST_INITIATED"
+
+	//eventMM
 )
 
 type UE struct {
@@ -47,7 +68,9 @@ type UE struct {
 	//sm
 	rrcFSM *fsm.FSM
 	rmFSM  *fsm.FSM
-	cmFSM  *fsm.FSM
+	smFSM  *fsm.FSM
+	mmFSM  *fsm.FSM
+	//cmFSM  *fsm.FSM
 	//timers
 	t3346 *timer.Timer
 	t3396 *timer.Timer
@@ -80,8 +103,11 @@ type UE struct {
 	aMFSetID    uint16
 	gGuti       [4]uint8
 
+	ip net.IP
+
 	id        uint8
 	snn       string
+	parentCtx context.Context
 	ctx       context.Context
 	cancel    context.CancelFunc
 	running   bool
@@ -112,14 +138,6 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 		ulDataRate:   ulDataRate,
 		dlDataRate:   dlDataRate,
 		pduSessions:  pduSessions,
-		rrcFSM: fsm.NewFSM(
-			stateRRCIdle,
-			fsm.Events{
-				{Name: eventRRCSetup, Src: []string{stateRRCIdle}, Dst: stateRRCConnected},
-				{Name: eventRRCConnectionRelease, Src: []string{stateRRCConnected, stateRRCIdle}, Dst: stateRRCIdle},
-			},
-			nil,
-		),
 		rmFSM: fsm.NewFSM(
 			stateRMDeregistered,
 			fsm.Events{
@@ -130,12 +148,29 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 			},
 			nil,
 		),
-		cmFSM: fsm.NewFSM(
-			stateCMIdle,
-			nil,
+		smFSM: fsm.NewFSM(
+			stateSMPDUSessionInactive,
+			fsm.Events{
+				{Name: eventSMPDUSessionEstablishmentRequest, Src: []string{stateSMPDUSessionInactive}, Dst: stateSMPDUSessionActivePending},
+				{Name: eventSMPDUSessionEstablishmentAccept, Src: []string{stateSMPDUSessionActivePending}, Dst: stateSMPDUSessionActive},
+			},
 			nil,
 		),
+		rrcFSM: fsm.NewFSM(
+			stateRRCIdle,
+			fsm.Events{
+				{Name: eventRRCSetup, Src: []string{stateRRCIdle}, Dst: stateRRCConnected},
+				{Name: eventRRCConnectionRelease, Src: []string{stateRRCConnected, stateRRCIdle}, Dst: stateRRCIdle},
+			},
+			nil,
+		),
+		//cmFSM: fsm.NewFSM(
+		//	stateCMIdle,
+		//	nil,
+		//	nil,
+		//),
 		id:        id,
+		parentCtx: parent,
 		ctx:       ctx,
 		cancel:    cancelFunc,
 		Notify:    make(chan interface{}, 1),
@@ -148,7 +183,7 @@ func (u *UE) NodeName() string {
 	return fmt.Sprintf("ue-%v", u.supi)
 }
 
-func (u *UE) SUPI() string {
+func (u *UE) GetSUPI() string {
 	return u.supi
 }
 
@@ -158,6 +193,10 @@ func (u *UE) SetSUPI(supi string) {
 	u.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	u.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	mqueue.NewQueue(supi)
+}
+
+func (u *UE) GetIP() net.IP {
+	return u.ip
 }
 
 func (u *UE) Copy(supi string, ueId uint8, sessionId uint8) *UE {
@@ -172,6 +211,7 @@ func (u *UE) Copy(supi string, ueId uint8, sessionId uint8) *UE {
 	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	ue.Notify = make(chan interface{})
+	ue.ctx, ue.cancel = context.WithCancel(ue.parentCtx)
 	mqueue.NewQueue(supi)
 	return &ue
 }
@@ -184,10 +224,26 @@ func (u *UE) GetPDUSessionNum() uint8 {
 	return uint8(len(u.pduSessions))
 }
 
+func (u *UE) GetRMState() string {
+	return u.rmFSM.Current()
+}
+
+func (u *UE) GetMMState() string {
+	return u.mmFSM.Current()
+}
+
+func (u *UE) GetSMState() string {
+	return u.smFSM.Current()
+}
+
 func (u *UE) Run() {
 	u.logger.Debugf("UE run")
 	go u.messageHandler()
 	u.running = true
+}
+
+func (u *UE) Stop() {
+	u.cancel()
 }
 
 func (u *UE) EstablishPDUSession(pduSessionNumber uint8) {
@@ -202,6 +258,7 @@ func (u *UE) EstablishPDUSession(pduSessionNumber uint8) {
 		return
 	}
 	mqueue.SendMessage(message.NASUplinkPdu{PDU: data, SendBy: u.supi}, u.gnb.Name)
+	u.smFSM.Event(eventSMPDUSessionEstablishmentRequest)
 }
 
 func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
@@ -231,6 +288,7 @@ func deriveSNN(mnc, mcc string) string {
 
 	return resu
 }
+
 func ParseIpVersion(str string) (utils.IpVersion, error) {
 	if str == "IPv4" {
 		return utils.IPv4, nil

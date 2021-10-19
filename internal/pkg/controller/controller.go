@@ -120,7 +120,7 @@ func (c *Controller) parseConfig(configPath string) error {
 	c.supiPointer = c.supiFrom
 	c.supiTo = viper.GetString("ue.supiTo")
 	c.supiNum = calcSUPINum(c.supiFrom, c.supiTo)
-	logger.ControllerLog.Infof("SUPI from: %v, to: %v, total: %v", c.supiFrom, c.supiTo, c.supiNum)
+	logger.ControllerLog.Infof("GetSUPI from: %v, to: %v, total: %v", c.supiFrom, c.supiTo, c.supiNum)
 
 	c.gnbName = viper.GetString("gnb.name")
 	n2IpFrom := net.ParseIP(viper.GetString("controller.n2IpFrom"))
@@ -258,23 +258,27 @@ func (c *Controller) start() {
 
 			// start RRCSetup
 			currentUE.RRCSetupRequest(currentGNB)
+
 			select {
 			case msg := <-currentUE.Notify:
 				switch msg.(type) {
 				case message.UERegistrationSuccess:
-					logger.ControllerLog.Infof("UE %v registration successed", currentUE.SUPI())
+					logger.ControllerLog.Infof("UE %v Registration Success", currentUE.GetSUPI())
 				}
 			}
+			//time.Sleep(3*time.Second)
 			currentUE.EstablishPDUSession(0)
+			select {
+			case msg := <-currentUE.Notify:
+				switch msg.(type) {
+				case message.UEPDUSessionEstablishmentAccept:
+					logger.ControllerLog.Infof("UE %v PDU Session Established", currentUE.GetSUPI())
+				}
+			}
+			currentUE.Stop()
 
 			// start registration
 
-			//select {
-			//case msg := <- currentUE.Notify:
-			//	switch msg.(type) {
-			//
-			//	}
-			//}
 			// start PDU session setup
 
 			//select {
@@ -362,11 +366,11 @@ func calcRealMaxUeNum(n2IpNum, uePerGnb, supiNum uint32, ueNum uint32) uint32 {
 func calcSUPINum(supiFrom string, supiTo string) uint32 {
 	imsiFrom, err := strconv.ParseUint(strings.Split(supiFrom, "-")[1], 16, 64)
 	if err != nil {
-		logger.ControllerLog.Errorf("SUPI parse failed: %+v", err)
+		logger.ControllerLog.Errorf("GetSUPI parse failed: %+v", err)
 	}
 	imsiTo, err := strconv.ParseUint(strings.Split(supiTo, "-")[1], 16, 64)
 	if err != nil {
-		logger.ControllerLog.Errorf("SUPI parse failed: %+v", err)
+		logger.ControllerLog.Errorf("GetSUPI parse failed: %+v", err)
 	}
 	return uint32(imsiTo - imsiFrom)
 }

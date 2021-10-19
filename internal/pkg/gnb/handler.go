@@ -13,14 +13,15 @@ import (
 )
 
 func (g *GNB) messageHandler() {
+	c := g.getMessageChan()
 	for {
 		select {
 		case <-g.ctx.Done():
 			return
 		default:
-			c := g.getMessageChan()
 			select {
 			case msg := <-c:
+				g.logger.Tracef("recieve message %T, %v", msg, msg)
 				switch msg.(type) {
 				case message.RRCSetupRequest:
 					g.handleRRCSetupRequestMessage(msg.(message.RRCSetupRequest))
@@ -37,22 +38,24 @@ func (g *GNB) messageHandler() {
 }
 
 func (g *GNB) handleRRCSetupRequestMessage(msg message.RRCSetupRequest) {
+	g.logger.Debugf("handle RRCSetupRequestMessage")
 	rRCSetupRequestMessage := msg
 	supi := rRCSetupRequestMessage.SendBy
-	if _, ok := g.ueMapBySupi[supi]; ok {
+	if u := g.FindUEBySUPI(supi); u != nil {
 		g.sendRRCRejectMessage(supi)
 		g.logger.Errorf("UE %v has already in gnb", supi)
 	} else {
 		ue := &utils.GnbUe{
 			SUPI: supi,
 		}
-		g.ueMapBySupi[supi] = ue
+		g.ueMapBySupi.Store(supi, ue)
 		g.sendRRCSetupMessage(supi)
 	}
 	return
 }
 
 func (g *GNB) handleRRCSetupCompleteMessage(msg message.RRCSetupComplete) {
+	g.logger.Debugf("handle RRCSetupCompleteMessage")
 	rRCSetupCompleteMessage := msg
 	ue := g.FindUEBySUPI(rRCSetupCompleteMessage.SendBy)
 	if ue == nil {
@@ -67,7 +70,7 @@ func (g *GNB) handleRRCSetupCompleteMessage(msg message.RRCSetupComplete) {
 		return
 	}
 	ue.RANUENGAPID = id
-	g.ueMapByRANUENGAPID[id] = ue
+	g.ueMapByRANUENGAPID.Store(id, ue)
 	err := g.sendInitialUEMessage(id, rRCSetupCompleteMessage.NASRegistrationRequest)
 	if err != nil {
 		g.logger.Errorf("Initial UE Message send failed %+v", err)
@@ -76,6 +79,7 @@ func (g *GNB) handleRRCSetupCompleteMessage(msg message.RRCSetupComplete) {
 }
 
 func (g *GNB) handleNASUplinkPdu(msg message.NASUplinkPdu) {
+	g.logger.Debugf("handle NASUplinkPDU")
 	ue := g.FindUEBySUPI(msg.SendBy)
 	if ue == nil {
 		g.logger.Errorf("UE %v not in gnb but got NASUplinkPdu", msg.SendBy)
@@ -94,6 +98,7 @@ func (g *GNB) handleNASUplinkPdu(msg message.NASUplinkPdu) {
 }
 
 func (g *GNB) sendRRCSetupMessage(supi string) {
+	g.logger.Debugf("send RRCSetupMessage")
 	mqueue.SendMessage(message.RRCSetup{}, supi)
 }
 
@@ -102,6 +107,7 @@ func (g *GNB) sendRRCRejectMessage(supi string) {
 }
 
 func (g *GNB) sendNASDownlinkPdu(supi string, pdu []byte) {
+	g.logger.Debugf("send NASDownlinkPdu")
 	msg := message.NASDownlinkPdu{
 		PDU: pdu,
 	}

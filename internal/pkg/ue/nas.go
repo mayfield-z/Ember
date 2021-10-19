@@ -3,6 +3,7 @@ package ue
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"github.com/free5gc/nas"
@@ -14,9 +15,11 @@ import (
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
+	"net"
 )
 
 func (u *UE) buildRegistrationRequest(capability bool) ([]byte, error) {
+	u.nasLogger.Debug("build RegistrationRequest")
 	m := nas.NewMessage()
 	m.GmmMessage = nas.NewGmmMessage()
 	m.GmmMessage.SetMessageType(nas.MsgTypeRegistrationRequest)
@@ -92,6 +95,7 @@ func (u *UE) buildRegistrationRequest(capability bool) ([]byte, error) {
 }
 
 func (u *UE) handleAuthenticationRequest(msg *nas.Message) {
+	u.nasLogger.Debug("handle AuthenticationRequest")
 	var authenticationResponse message.NASUplinkPdu
 	var err error
 
@@ -123,6 +127,7 @@ func (u *UE) handleAuthenticationRequest(msg *nas.Message) {
 }
 
 func (u *UE) buildAuthenticationResponse(authenticationResponseParam []uint8, eapMsg string) ([]byte, error) {
+	u.nasLogger.Debug("build AuthenticationResponse")
 	m := nas.NewMessage()
 	m.GmmMessage = nas.NewGmmMessage()
 	m.GmmMessage.SetMessageType(nas.MsgTypeAuthenticationResponse)
@@ -158,6 +163,7 @@ func (u *UE) buildAuthenticationResponse(authenticationResponseParam []uint8, ea
 }
 
 func (u *UE) handleSecurityModeCommand(msg *nas.Message) {
+	u.nasLogger.Debug("handle SecurityModeCommand")
 	switch msg.SecurityModeCommand.SelectedNASSecurityAlgorithms.GetTypeOfCipheringAlgorithm() {
 	case 0:
 		u.nasLogger.Debug("Type of ciphering algorithm is 5G-EA0")
@@ -195,7 +201,25 @@ func (u *UE) handleSecurityModeCommand(msg *nas.Message) {
 	mqueue.SendMessage(message.NASUplinkPdu{PDU: pdu, SendBy: u.supi}, u.gnb.Name)
 }
 
+func (u *UE) handleDLNASTransport(msg *nas.Message) {
+	u.nasLogger.Debug("handle DLNASTransport")
+	payload := msg.GmmMessage.DLNASTransport.PayloadContainer.Buffer
+	msg2 := new(nas.Message)
+	err := msg2.PlainNasDecode(&payload)
+	if err != nil {
+		u.nasLogger.Errorf("DLNASTransport payload decode failed: %v", err)
+	}
+	if msg2.GsmHeader.GetMessageType() == nas.MsgTypePDUSessionEstablishmentAccept {
+		u.nasLogger.Debug("PDU Session Establishment Accept")
+		ueIp := msg2.PDUSessionEstablishmentAccept.GetPDUAddressInformation()
+		u.ip = net.IPv4(ueIp[0], ueIp[1], ueIp[2], ueIp[3])
+		u.smFSM.Event(eventSMPDUSessionEstablishmentAccept)
+		u.Notify <- message.UEPDUSessionEstablishmentAccept{}
+	}
+}
+
 func (u *UE) buildSecurityModeComplete(rinmr uint8) ([]byte, error) {
+	u.nasLogger.Debug("build SecurityModeComplete")
 	registrationRequest, err := u.buildRegistrationRequest(true)
 	if err != nil {
 		return nil, errors.WithMessage(err, "build registration request in security mode complete failed.")
@@ -240,6 +264,7 @@ func (u *UE) buildSecurityModeComplete(rinmr uint8) ([]byte, error) {
 }
 
 func (u *UE) handleRegistrationAccept(msg *nas.Message) {
+	u.nasLogger.Debug("handle RegistrationAccept")
 	registrationAccept := msg.RegistrationAccept
 	if registrationAccept == nil {
 		u.nasLogger.Errorf("registration accept is nil")
@@ -256,11 +281,13 @@ func (u *UE) handleRegistrationAccept(msg *nas.Message) {
 		return
 	}
 
-	mqueue.SendMessage(message.NASUplinkPdu{PDU: registrationComplete, SendBy: u.supi}, u.gnb.Name)
+	u.rmFSM.Event(eventRMRegistrationAccept)
 	u.Notify <- message.UERegistrationSuccess{}
+	mqueue.SendMessage(message.NASUplinkPdu{PDU: registrationComplete, SendBy: u.supi}, u.gnb.Name)
 }
 
 func (u *UE) buildRegistrationComplete() ([]byte, error) {
+	u.nasLogger.Debug("build RegistrationComplete")
 	m := nas.NewMessage()
 	m.GmmMessage = nas.NewGmmMessage()
 	m.GmmHeader.SetMessageType(nas.MsgTypeRegistrationComplete)
@@ -290,6 +317,7 @@ func (u *UE) buildRegistrationComplete() ([]byte, error) {
 }
 
 func (u *UE) buildPDUSessionEstablishmentRequest(id uint8) ([]byte, error) {
+	u.nasLogger.Debug("build PDUSessionEstablishmentRequest")
 	m := nas.NewMessage()
 	m.GsmMessage = nas.NewGsmMessage()
 	m.GsmHeader.SetMessageType(nas.MsgTypePDUSessionEstablishmentRequest)
@@ -318,16 +346,14 @@ func (u *UE) buildPDUSessionEstablishmentRequest(id uint8) ([]byte, error) {
 	m.GsmMessage.PDUSessionEstablishmentRequest = pduSessionEstablishmentRequest
 
 	data := new(bytes.Buffer)
-	err := m.GsmMessageEncode(data)
-	if err != nil {
-		return nil, errors.WithMessage(err, "PDU session establishment request failed")
-	}
+	EncodePDUSessionEstablishmentRequest(m.GsmMessage.PDUSessionEstablishmentRequest, data)
 
 	pdu := data.Bytes()
 	return pdu, nil
 }
 
 func (u *UE) buildULNasTransportPDUSessionEstablishmentRequest(pduSessionNumber uint8) ([]byte, error) {
+	u.nasLogger.Debug("build ULNASTransportPDUSessionEstablishmentRequest")
 	pduSession := u.pduSessions[pduSessionNumber]
 
 	pdu, err := u.buildPDUSessionEstablishmentRequest(pduSession.Id)
@@ -423,4 +449,40 @@ func (u *UE) encodeNASPduWithSecurity(payload []byte, newSecurityContext bool, s
 	u.ULCount.AddOne()
 
 	return payload, nil
+}
+
+func EncodePDUSessionEstablishmentRequest(a *nasMessage.PDUSessionEstablishmentRequest, buffer *bytes.Buffer) {
+	binary.Write(buffer, binary.BigEndian, &a.ExtendedProtocolDiscriminator.Octet)
+	binary.Write(buffer, binary.BigEndian, &a.PDUSessionID.Octet)
+	binary.Write(buffer, binary.BigEndian, &a.PTI.Octet)
+	binary.Write(buffer, binary.BigEndian, &a.PDUSESSIONESTABLISHMENTREQUESTMessageIdentity.Octet)
+	binary.Write(buffer, binary.BigEndian, &a.IntegrityProtectionMaximumDataRate.Octet)
+	if a.PDUSessionType != nil {
+		binary.Write(buffer, binary.BigEndian, &a.PDUSessionType.Octet)
+	}
+	if a.SSCMode != nil {
+		binary.Write(buffer, binary.BigEndian, &a.SSCMode.Octet)
+	}
+	if a.Capability5GSM != nil {
+		binary.Write(buffer, binary.BigEndian, a.Capability5GSM.GetIei())
+		binary.Write(buffer, binary.BigEndian, a.Capability5GSM.GetLen())
+		binary.Write(buffer, binary.BigEndian, a.Capability5GSM.Octet[:a.Capability5GSM.GetLen()])
+	}
+	if a.MaximumNumberOfSupportedPacketFilters != nil {
+		binary.Write(buffer, binary.BigEndian, a.MaximumNumberOfSupportedPacketFilters.GetIei())
+		binary.Write(buffer, binary.BigEndian, &a.MaximumNumberOfSupportedPacketFilters.Octet)
+	}
+	if a.AlwaysonPDUSessionRequested != nil {
+		binary.Write(buffer, binary.BigEndian, &a.AlwaysonPDUSessionRequested.Octet)
+	}
+	if a.SMPDUDNRequestContainer != nil {
+		binary.Write(buffer, binary.BigEndian, a.SMPDUDNRequestContainer.GetIei())
+		binary.Write(buffer, binary.BigEndian, a.SMPDUDNRequestContainer.GetLen())
+		binary.Write(buffer, binary.BigEndian, &a.SMPDUDNRequestContainer.Buffer)
+	}
+	if a.ExtendedProtocolConfigurationOptions != nil {
+		binary.Write(buffer, binary.BigEndian, a.ExtendedProtocolConfigurationOptions.GetIei())
+		binary.Write(buffer, binary.BigEndian, a.ExtendedProtocolConfigurationOptions.GetLen())
+		binary.Write(buffer, binary.BigEndian, &a.ExtendedProtocolConfigurationOptions.Buffer)
+	}
 }
