@@ -9,12 +9,13 @@ import (
 func main() {
 	configPath := flag.String("c", "../config/example.toml", "config path")
 	//configPath := "../config/example.toml"
+	flag.Parse()
 	c := controller.ControllerSelf()
 	err := c.Init(*configPath)
 	if err != nil {
 		logger.AppLog.Errorf("config init failed")
-		return
+	} else {
+		c.Start()
+		select {}
 	}
-	c.Start()
-	select {}
 }

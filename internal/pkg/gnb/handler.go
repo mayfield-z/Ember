@@ -46,7 +46,8 @@ func (g *GNB) handleRRCSetupRequestMessage(msg message.RRCSetupRequest) {
 		g.logger.Errorf("UE %v has already in gnb", supi)
 	} else {
 		ue := &utils.GnbUe{
-			SUPI: supi,
+			SUPI:                     supi,
+			TransportLayerGNBAddress: g.n3Address,
 		}
 		g.ueMapBySupi.Store(supi, ue)
 		g.sendRRCSetupMessage(supi)

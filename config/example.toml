@@ -2,13 +2,14 @@ title = "Example Config"
 
 [app]
 # error, debug, warn, info, trace
-logLevel = "info"
+logLevel = "debug"
 # logPath = ""
 
 [controller]
-n2IpFrom = "10.100.0.1"
-n2IpTo = "10.100.0.1"
-ueNum = 1000
+n2IpFrom = "223.193.7.253"
+n2IpTo = "223.193.7.253"
+n3Ip = "1.1.1.1"
+ueNum = 1
 uePerGnb = 20000
 uePerSec = 3
 initPDUWhenAllUERegistered = false
@@ -48,6 +49,6 @@ amf = "8000"
 
 
 [amf]
-ip = "10.100.0.11"
+ip = "223.193.7.254"
 # ip = "127.0.0.1"
 port = 38412

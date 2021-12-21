@@ -18,6 +18,7 @@ var (
 	UeLog         *logrus.Entry
 	ControllerLog *logrus.Entry
 	QueueLog      *logrus.Entry
+	DpdkLog       *logrus.Entry
 )
 
 func init() {
@@ -42,6 +43,7 @@ func init() {
 	UeLog = log.WithFields(logrus.Fields{"category": "Ue"})
 	ControllerLog = log.WithFields(logrus.Fields{"category": "Controller"})
 	QueueLog = log.WithFields(logrus.Fields{"category": "Queue"})
+	DpdkLog = log.WithFields(logrus.Fields{"category": "DPDK"})
 }
 
 func SetLogLevel(level logrus.Level) {

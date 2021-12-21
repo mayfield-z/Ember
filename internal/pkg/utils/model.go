@@ -15,15 +15,16 @@ type GnbAmf struct {
 }
 
 type GnbUe struct {
-	SUPI                  string
-	PLMN                  PLMN
-	AMFUENGAPID           int64
-	RANUENGAPID           int64
-	PDUSessionID          int64
-	QosFlowIdentifier     int64
-	FiveQI                int64
-	GTPTEID               []byte
-	TransportLayerAddress net.IP
+	SUPI                     string
+	PLMN                     PLMN
+	AMFUENGAPID              int64
+	RANUENGAPID              int64
+	PDUSessionID             int64
+	QosFlowIdentifier        int64
+	FiveQI                   int64
+	GTPTEID                  []byte
+	TransportLayerUPFAddress net.IP
+	TransportLayerGNBAddress net.IP
 }
 
 type SNSSAI struct {

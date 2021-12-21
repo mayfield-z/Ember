@@ -26,6 +26,8 @@ type GNB struct {
 	nci             uint64 // encoded as 36-bit string
 	idLength        uint8
 	tac             uint32 // encoded as 2 or 3-octet string
+	n2Address       net.IP
+	n3Address       net.IP
 	amfAddress      net.IP
 	amfPort         int
 	snssai          utils.SNSSAI
@@ -44,7 +46,7 @@ type GNB struct {
 	cancelFunc              context.CancelFunc
 }
 
-func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, amfAddress net.IP, amfPort int, sst uint8, sd uint32, parent context.Context) *GNB {
+func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, tac uint32, idLength uint8, n2Address, n3Address, amfAddress net.IP, amfPort int, sst uint8, sd uint32, parent context.Context) *GNB {
 	//TODO: check if same name gnb exists
 	mqueue.NewQueue(name)
 	ctx, cancelFunc := context.WithCancel(parent)
@@ -58,6 +60,8 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 		nci:        nci,
 		idLength:   idLength,
 		tac:        tac,
+		n2Address:  n2Address,
+		n3Address:  n3Address,
 		amfAddress: amfAddress,
 		amfPort:    amfPort,
 		snssai: utils.SNSSAI{
@@ -137,7 +141,7 @@ func (g *GNB) FindUEByRANUENGAPID(id int64) *utils.GnbUe {
 func (g *GNB) Run() error {
 	g.running = true
 	g.logger.Debugf("SCTP dial %v:%v", g.amfAddress, g.amfPort)
-	conn, err := Dial(g.amfAddress, g.amfPort)
+	conn, err := Dial(g.n2Address, g.amfAddress, g.amfPort)
 	if err != nil {
 		g.Stop()
 		return errors.Wrapf(err, "Failed to dial sctp address %v:%v", g.amfAddress, g.amfPort)

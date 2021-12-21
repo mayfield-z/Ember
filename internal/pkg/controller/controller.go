@@ -156,6 +156,8 @@ func (c *Controller) parseConfig(configPath string) error {
 		c.nrCellIdentityPointer,
 		viper.GetUint32("gnb.tac"),
 		uint8(viper.GetUint32("gnb.idLength")),
+		c.n2IpPointer,
+		net.ParseIP(viper.GetString("controller.n3Ip")),
 		c.amfIp,
 		c.amfPort,
 		uint8(viper.GetUint32("gnb.sst")),
@@ -276,22 +278,13 @@ func (c *Controller) start() {
 				}
 			}
 			currentUE.Stop()
-
-			// start registration
-
-			// start PDU session setup
-
-			//select {
-			//case msg := <- currentUE.Notify:
-			//	switch msg.(type) {
-			//
-			//	}
-			//}
+			logger.ControllerLog.Debugf("UE IP is: %v, TEID is :%v", currentUE.GetIP(), currentGNB.FindUEBySUPI(currentUE.GetSUPI()).GTPTEID)
 		}
 	}
 }
 
 func (c *Controller) createAndAddGnb() *gnb.GNB {
+	// change ip
 	logger.ControllerLog.Infof("Creating gnb %v-%v", c.gnbName, len(c.gnbList))
 	gnb := c.templateGnb.Copy(fmt.Sprintf("%v-%v", c.gnbName, len(c.gnbList))).
 		SetGlobalRANNodeID(c.globalRANNodeIDPointer).

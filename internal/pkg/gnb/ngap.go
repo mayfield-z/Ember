@@ -14,12 +14,20 @@ import (
 	"net"
 )
 
-func Dial(ip net.IP, port int) (*sctp.SCTPConn, error) {
-	laddr := &sctp.SCTPAddr{}
+func Dial(localIp, amfIp net.IP, port int) (*sctp.SCTPConn, error) {
+	laddr := &sctp.SCTPAddr{
+		IPAddrs: []net.IPAddr{
+			{
+				IP:   localIp,
+				Zone: "",
+			},
+		},
+		Port: 0,
+	}
 	raddr := &sctp.SCTPAddr{
 		IPAddrs: []net.IPAddr{
 			{
-				IP:   ip,
+				IP:   amfIp,
 				Zone: "",
 			},
 		},
@@ -306,7 +314,7 @@ func (g *GNB) handlePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) {
 						if len(addr) == 4 {
 							transportLayerAddress = net.IPv4(addr[0], addr[1], addr[2], addr[3])
 						} else {
-							g.logger.Errorf("TransportLayerAddress len is %v", len(addr))
+							g.logger.Errorf("TransportLayerUPFAddress len is %v", len(addr))
 							break
 						}
 					case ngapType.ProtocolIEIDPDUSessionType:
@@ -335,7 +343,7 @@ func (g *GNB) handlePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) {
 	ue.QosFlowIdentifier = qosFlowIdentifier
 	ue.FiveQI = fiveQI
 	ue.GTPTEID = gTPTEID
-	ue.TransportLayerAddress = transportLayerAddress
+	ue.TransportLayerUPFAddress = transportLayerAddress
 
 	p, err := g.buildPDUSessionResourceSetupResponse(ue)
 	if err != nil {
@@ -685,7 +693,7 @@ func (g *GNB) buildPDUSessionResourceSetupResponse(ue *utils.GnbUe) ([]byte, err
 	upTransportLayerInformation := &pduSessionResourceSetupResponseTransfer.DLQosFlowPerTNLInformation.UPTransportLayerInformation
 	upTransportLayerInformation.Present = ngapType.UPTransportLayerInformationPresentGTPTunnel
 	upTransportLayerInformation.GTPTunnel = new(ngapType.GTPTunnel)
-	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.Bytes = ue.TransportLayerAddress[12:16]
+	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.Bytes = ue.TransportLayerGNBAddress[12:16]
 	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.BitLength = 32
 	upTransportLayerInformation.GTPTunnel.GTPTEID.Value = ue.GTPTEID
 
