@@ -2,15 +2,17 @@ title = "Example Config"
 
 [app]
 # error, debug, warn, info, trace
-logLevel = "debug"
+logLevel = "info"
 # logPath = ""
 
 [controller]
-n2IpFrom = "223.193.7.253"
-n2IpTo = "223.193.7.253"
-n3Ip = "1.1.1.1"
-ueNum = 1
-uePerGnb = 20000
+usingInterface = "ens3"
+n2IpFrom = "223.193.7.230"
+n2IpTo = "223.193.7.239"
+n3IpFrom = "223.193.7.240"
+n3IpTo = "223.193.7.249"
+ueNum = 2
+uePerGnb = 1
 uePerSec = 3
 initPDUWhenAllUERegistered = false
 

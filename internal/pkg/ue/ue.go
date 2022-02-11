@@ -121,7 +121,7 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 	// TODO: check dup
 	mqueue.NewQueue(supi)
 	ctx, cancelFunc := context.WithCancel(parent)
-	return &UE{
+	u := UE{
 		supi: supi,
 		plmn: utils.PLMN{
 			Mcc: mcc,
@@ -137,7 +137,7 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 		snn:          deriveSNN(mnc, mcc),
 		ulDataRate:   ulDataRate,
 		dlDataRate:   dlDataRate,
-		pduSessions:  pduSessions,
+		pduSessions:  make([]utils.PDU, 1),
 		rmFSM: fsm.NewFSM(
 			stateRMDeregistered,
 			fsm.Events{
@@ -177,6 +177,8 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 		logger:    logger.UeLog.WithFields(logrus.Fields{"name": supi}),
 		nasLogger: logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"}),
 	}
+	copy(u.pduSessions[:], pduSessions)
+	return &u
 }
 
 func (u *UE) NodeName() string {

@@ -4,9 +4,15 @@ import (
 	"flag"
 	"github.com/mayfield-z/ember/internal/pkg/controller"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
+	// Ctrl+C handler
+	CloseHandler()
+
 	configPath := flag.String("c", "../config/example.toml", "config path")
 	//configPath := "../config/example.toml"
 	flag.Parse()
@@ -18,4 +24,15 @@ func main() {
 		c.Start()
 		select {}
 	}
+}
+
+func CloseHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
+	go func() {
+		<-c
+		logger.AppLog.Info("shutdown signal received, exiting...")
+		controller.ControllerSelf().Stop()
+		os.Exit(0)
+	}()
 }

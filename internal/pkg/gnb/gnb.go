@@ -50,7 +50,7 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 	//TODO: check if same name gnb exists
 	mqueue.NewQueue(name)
 	ctx, cancelFunc := context.WithCancel(parent)
-	return &GNB{
+	g := GNB{
 		name:            name,
 		globalRANNodeID: globalRANNodeID,
 		plmn: utils.PLMN{
@@ -60,10 +60,10 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 		nci:        nci,
 		idLength:   idLength,
 		tac:        tac,
-		n2Address:  n2Address,
-		n3Address:  n3Address,
-		amfAddress: amfAddress,
 		amfPort:    amfPort,
+		n2Address:  make([]byte, 16),
+		n3Address:  make([]byte, 16),
+		amfAddress: make([]byte, 16),
 		snssai: utils.SNSSAI{
 			Sst: sst,
 			Sd:  sd,
@@ -75,6 +75,10 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 		ctx:        ctx,
 		cancelFunc: cancelFunc,
 	}
+	copy(g.n2Address[:], n2Address)
+	copy(g.n3Address[:], n3Address)
+	copy(g.amfAddress[:], amfAddress)
+	return &g
 }
 
 func (g *GNB) NodeName() string {
@@ -116,7 +120,17 @@ func (g *GNB) SetNRCellIdentity(nci uint64) *GNB {
 }
 
 func (g *GNB) SetAMFAddress(ip net.IP) *GNB {
-	g.amfAddress = ip
+	copy(g.amfAddress[:], ip)
+	return g
+}
+
+func (g *GNB) SetN2Addresses(ip net.IP) *GNB {
+	copy(g.n2Address[:], ip)
+	return g
+}
+
+func (g *GNB) SetN3Addresses(ip net.IP) *GNB {
+	copy(g.n3Address[:], ip)
 	return g
 }
 
@@ -140,6 +154,7 @@ func (g *GNB) FindUEByRANUENGAPID(id int64) *utils.GnbUe {
 
 func (g *GNB) Run() error {
 	g.running = true
+	g.logger.Debugf("GNB %s is running, N2: %v, N3: %v", g.name, g.n2Address.String(), g.n3Address.String())
 	g.logger.Debugf("SCTP dial %v:%v", g.amfAddress, g.amfPort)
 	conn, err := Dial(g.n2Address, g.amfAddress, g.amfPort)
 	if err != nil {
