@@ -30,8 +30,10 @@ type Controller struct {
 	ueList                     []*ue.UE
 	templateGnb                *gnb.GNB
 	templateUE                 *ue.UE
-	usingInterface             *net.Interface
-	originalAddresses          []net.Addr
+	n2Interface                *net.Interface
+	n3Interface                *net.Interface
+	n2OriginalAddresses        []net.Addr
+	n3OriginalAddresses        []net.Addr
 	gnbName                    string
 	n2IpFrom                   net.IP
 	n2IpTo                     net.IP
@@ -65,7 +67,7 @@ type Controller struct {
 	mutex      sync.Mutex
 }
 
-func ControllerSelf() *Controller {
+func Self() *Controller {
 	return &controller
 }
 
@@ -128,14 +130,24 @@ func (c *Controller) parseConfig(configPath string) error {
 	c.supiNum = calcSUPINum(c.supiFrom, c.supiTo)
 	logger.ControllerLog.Infof("GetSUPI from: %v, to: %v, total: %v", c.supiFrom, c.supiTo, c.supiNum)
 
-	c.usingInterface, err = net.InterfaceByName(viper.GetString("controller.usingInterface"))
+	c.n2Interface, err = net.InterfaceByName(viper.GetString("controller.n2Interface"))
 	if err != nil {
-		return errors.Wrap(err, "Controller GetInterfaceByName failed")
+		return errors.Wrap(err, "Controller GetN2InterfaceByName failed")
 	}
 
-	c.originalAddresses, err = c.usingInterface.Addrs()
+	c.n3Interface, err = net.InterfaceByName(viper.GetString("controller.n2Interface"))
 	if err != nil {
-		return errors.Wrap(err, "Controller GetInterfaceAddr failed")
+		return errors.Wrap(err, "Controller GetN3InterfaceByName failed")
+	}
+
+	c.n2OriginalAddresses, err = c.n2Interface.Addrs()
+	if err != nil {
+		return errors.Wrap(err, "Controller GetN2InterfaceAddr failed")
+	}
+
+	c.n3OriginalAddresses, err = c.n3Interface.Addrs()
+	if err != nil {
+		return errors.Wrap(err, "Controller GetN3InterfaceAddr failed")
 	}
 
 	c.gnbName = viper.GetString("gnb.name")
@@ -316,13 +328,26 @@ func (c *Controller) Stop() {
 }
 
 func (c *Controller) cleanUp() {
-	addrs, err := c.usingInterface.Addrs()
+	addrs, err := c.n2Interface.Addrs()
 	if err != nil {
 		logger.ControllerLog.Fatal(err)
 	}
 	for _, addr := range addrs {
-		if !utils.ExistsInAddrList(addr, c.originalAddresses) {
-			err = utils.DelAddrFromInterface(addr, c.usingInterface)
+		if !utils.ExistsInAddrList(addr, c.n2OriginalAddresses) {
+			err = utils.DelAddrFromInterface(addr, c.n2Interface)
+			if err != nil {
+				logger.ControllerLog.Fatal(err)
+			}
+		}
+	}
+
+	addrs, err = c.n3Interface.Addrs()
+	if err != nil {
+		logger.ControllerLog.Fatal(err)
+	}
+	for _, addr := range addrs {
+		if !utils.ExistsInAddrList(addr, c.n3OriginalAddresses) {
+			err = utils.DelAddrFromInterface(addr, c.n3Interface)
 			if err != nil {
 				logger.ControllerLog.Fatal(err)
 			}
@@ -334,7 +359,7 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 	// change ip
 	logger.ControllerLog.Infof("Creating gnb %v-%v", c.gnbName, len(c.gnbList))
 	logger.ControllerLog.Debugf("n2:%v", c.n2IpPointer.String())
-	gnb := c.templateGnb.Copy(fmt.Sprintf("%v-%v", c.gnbName, len(c.gnbList))).
+	g := c.templateGnb.Copy(fmt.Sprintf("%v-%v", c.gnbName, len(c.gnbList))).
 		SetGlobalRANNodeID(c.globalRANNodeIDPointer).
 		SetNRCellIdentity(c.nrCellIdentityPointer).
 		SetN2Addresses(c.n2IpPointer).
@@ -342,14 +367,14 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 	c.globalRANNodeIDPointer += 1
 	c.nrCellIdentityPointer += 1
 
-	err := utils.AddIpToInterface(c.n2IpPointer, c.usingInterface)
+	err := utils.AddIpToInterface(c.n2IpPointer, c.n2Interface)
 	if err != nil {
-		logger.ControllerLog.Fatalf("Add N2 Address to interface %s failed: %v", c.usingInterface.Name, err)
+		logger.ControllerLog.Fatalf("Add N2 Address to interface %s failed: %v", c.n2Interface.Name, err)
 	}
 
-	err = utils.AddIpToInterface(c.n3IpPointer, c.usingInterface)
+	err = utils.AddIpToInterface(c.n3IpPointer, c.n3Interface)
 	if err != nil {
-		logger.ControllerLog.Fatalf("Add N3 Address to interface %s failed: %v", c.usingInterface.Name, err)
+		logger.ControllerLog.Fatalf("Add N3 Address to interface %s failed: %v", c.n3Interface.Name, err)
 	}
 
 	if c.n3IpPointer.Equal(c.n3IpTo) || c.n2IpPointer.Equal(c.n2IpTo) {
@@ -357,13 +382,13 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 	}
 	c.n2IpPointer = utils.Add1(c.n2IpPointer)
 	c.n3IpPointer = utils.Add1(c.n3IpPointer)
-	c.addGnb(gnb)
-	return gnb
+	c.addGnb(g)
+	return g
 }
 
 func (c *Controller) createAndAddUE() *ue.UE {
 	logger.ControllerLog.Infof("Creating UE: %v", c.supiPointer)
-	ue := c.templateUE.Copy(c.supiPointer, c.ueIdPointer, c.pduSessionIdPointer)
+	u := c.templateUE.Copy(c.supiPointer, c.ueIdPointer, c.pduSessionIdPointer)
 	imsi, err := strconv.ParseUint(strings.Split(c.supiPointer, "-")[1], 10, 64)
 	if err != nil {
 		logger.ControllerLog.Errorf("create ue failed: %+v", err)
@@ -371,9 +396,9 @@ func (c *Controller) createAndAddUE() *ue.UE {
 	}
 	c.supiPointer = fmt.Sprintf("imsi-%v", imsi+1)
 	c.ueIdPointer += 1
-	c.pduSessionIdPointer += ue.GetPDUSessionNum()
-	c.addUE(ue)
-	return ue
+	c.pduSessionIdPointer += u.GetPDUSessionNum()
+	c.addUE(u)
+	return u
 }
 
 func (c *Controller) getN2Ip() net.IP {
@@ -431,14 +456,6 @@ func calcSUPINum(supiFrom string, supiTo string) uint32 {
 		logger.ControllerLog.Errorf("GetSUPI parse failed: %+v", err)
 	}
 	return uint32(imsiTo - imsiFrom)
-}
-
-func u32Max(a, b uint32) uint32 {
-	if a > b {
-		return a
-	} else {
-		return b
-	}
 }
 
 func u32Min(a, b uint32) uint32 {
