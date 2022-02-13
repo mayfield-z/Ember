@@ -105,7 +105,7 @@ type UE struct {
 
 	ip net.IP
 
-	id        uint8
+	id        uint64
 	snn       string
 	parentCtx context.Context
 	ctx       context.Context
@@ -117,7 +117,7 @@ type UE struct {
 	nasLogger *logrus.Entry
 }
 
-func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []utils.PDU, id uint8, parent context.Context) *UE {
+func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []utils.PDU, id uint64, parent context.Context) *UE {
 	// TODO: check dup
 	mqueue.NewQueue(supi)
 	ctx, cancelFunc := context.WithCancel(parent)
@@ -201,7 +201,11 @@ func (u *UE) GetIP() net.IP {
 	return u.ip
 }
 
-func (u *UE) Copy(supi string, ueId uint8, sessionId uint8) *UE {
+func (u *UE) GetID() uint64 {
+	return u.id
+}
+
+func (u *UE) Copy(supi string, ueId uint64, sessionId uint8) *UE {
 	// TODO: check source ue state
 	ue := *u
 	ue.supi = supi
@@ -244,8 +248,14 @@ func (u *UE) Run() {
 	u.running = true
 }
 
+func (u *UE) Running() bool {
+	return u.running
+}
+
 func (u *UE) Stop() {
+	u.logger.Debugf("UE stop")
 	u.cancel()
+	u.running = false
 }
 
 func (u *UE) EstablishPDUSession(pduSessionNumber uint8) {

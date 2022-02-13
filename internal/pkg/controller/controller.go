@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -57,14 +58,20 @@ type Controller struct {
 	supiPointer            string
 	n2IpPointer            net.IP
 	n3IpPointer            net.IP
-	ueIdPointer            uint8
+	ueIdPointer            uint64
 	pduSessionIdPointer    uint8
 	globalRANNodeIDPointer uint32
 	nrCellIdentityPointer  uint64
 
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	mutex      sync.Mutex
+	ueNumOfCurrentGnb uint32
+	emulatedUeNum     uint32 // atomic
+	gnbCounter        uint32 // atomic
+
+	ctx          context.Context
+	cancelFunc   context.CancelFunc
+	ueListMutex  sync.Mutex
+	ueInfoMutex  sync.Mutex
+	gnbListMutex sync.Mutex
 }
 
 func Self() *Controller {
@@ -72,17 +79,26 @@ func Self() *Controller {
 }
 
 func (c *Controller) addGnb(gnb *gnb.GNB) {
-	c.mutex.Lock()
+	c.gnbListMutex.Lock()
+	defer c.gnbListMutex.Unlock()
 	logger.ControllerLog.Debugf("Adding gNB %v", gnb.NodeName())
 	c.gnbList = append(c.gnbList, gnb)
-	c.mutex.Unlock()
+}
+
+func (c *Controller) getGnbByIndex(index int) *gnb.GNB {
+	c.gnbListMutex.Lock()
+	defer c.gnbListMutex.Unlock()
+	if index < len(c.gnbList) {
+		return c.gnbList[index]
+	}
+	return nil
 }
 
 func (c *Controller) addUE(ue *ue.UE) {
-	c.mutex.Lock()
+	c.ueListMutex.Lock()
+	defer c.ueListMutex.Unlock()
 	logger.ControllerLog.Debugf("Adding UE: %v", ue.NodeName())
 	c.ueList = append(c.ueList, ue)
-	c.mutex.Unlock()
 }
 
 func (c *Controller) Init(configPath string) error {
@@ -91,8 +107,8 @@ func (c *Controller) Init(configPath string) error {
 	c.ctx, c.cancelFunc = context.WithCancel(context.Background())
 	c.globalRANNodeIDPointer = 1
 	c.nrCellIdentityPointer = 1
-	c.ueIdPointer = 1
-	c.pduSessionIdPointer = 1
+	c.ueIdPointer = 0
+	c.pduSessionIdPointer = 0
 	c.configPath = configPath
 
 	err := c.parseConfig(configPath)
@@ -257,73 +273,20 @@ func (c *Controller) start() {
 	ueIntervalInMicrosecond := int64(math.Ceil(float64(1000000) / c.uePerSec))
 	ticker := time.NewTicker(time.Duration(ueIntervalInMicrosecond) * time.Microsecond)
 	defer ticker.Stop()
-	ueNumOfCurrentGnb := uint32(0)
-	gnbPointer := 0
 
-	for uint32(len(c.ueList)) < c.realMaxUe {
+	for c.emulatedUeNum < c.realMaxUe {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			// create UE
-			if len(c.ueList) == int(c.ueNum) {
-				//	idle
-				return
-			}
-			currentUE := c.createAndAddUE()
-			currentUE.Run()
-			if ueNumOfCurrentGnb == c.uePerGnb {
-				gnbPointer += 1
-				ueNumOfCurrentGnb = 0
-			} else {
-				ueNumOfCurrentGnb += 1
-			}
-
-			// create gNB
-			if len(c.gnbList) == gnbPointer {
-				if len(c.gnbList) == int(c.n2IpNum) || len(c.gnbList) == int(c.n3IpNum) {
-					// idle
-					logger.ControllerLog.Errorf("can not create more gNB")
-					return
-				}
-				err := c.createAndAddGnb().Run()
-				if err != nil {
-					logger.ControllerLog.Errorf("create gnb failed: %+v", err)
-					return
-				}
-				time.Sleep(time.Second)
-			}
-			currentGNB := c.gnbList[len(c.gnbList)-1]
-
-			// start RRCSetup
-			currentUE.RRCSetupRequest(currentGNB)
-
-			select {
-			case msg := <-currentUE.Notify:
-				switch msg.(type) {
-				case message.UERegistrationSuccess:
-					logger.ControllerLog.Infof("UE %v Registration Success", currentUE.GetSUPI())
-				}
-			}
-			//time.Sleep(3*time.Second)
-			currentUE.EstablishPDUSession(0)
-			select {
-			case msg := <-currentUE.Notify:
-				switch msg.(type) {
-				case message.UEPDUSessionEstablishmentAccept:
-					logger.ControllerLog.Infof("UE %v PDU Session Established", currentUE.GetSUPI())
-				}
-			}
-			currentUE.Stop()
-			logger.ControllerLog.Debugf("UE IP is: %v, TEID is :%v", currentUE.GetIP(), currentGNB.FindUEBySUPI(currentUE.GetSUPI()).GTPTEID)
+			c.emulatedUeNumAdd1()
+			go c.emulateOneUEUserPlane(!c.initPDUWhenAllUERegistered)
 		}
 	}
 }
 
 func (c *Controller) Stop() {
-	for _, g := range c.gnbList {
-		g.Stop()
-	}
+	c.cancelFunc()
 	c.cleanUp()
 }
 
@@ -356,9 +319,7 @@ func (c *Controller) cleanUp() {
 }
 
 func (c *Controller) createAndAddGnb() *gnb.GNB {
-	// change ip
 	logger.ControllerLog.Infof("Creating gnb %v-%v", c.gnbName, len(c.gnbList))
-	logger.ControllerLog.Debugf("n2:%v", c.n2IpPointer.String())
 	g := c.templateGnb.Copy(fmt.Sprintf("%v-%v", c.gnbName, len(c.gnbList))).
 		SetGlobalRANNodeID(c.globalRANNodeIDPointer).
 		SetNRCellIdentity(c.nrCellIdentityPointer).
@@ -377,9 +338,6 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 		logger.ControllerLog.Fatalf("Add N3 Address to interface %s failed: %v", c.n3Interface.Name, err)
 	}
 
-	if c.n3IpPointer.Equal(c.n3IpTo) || c.n2IpPointer.Equal(c.n2IpTo) {
-		logger.ControllerLog.Fatalf("GNB IP pool empty")
-	}
 	c.n2IpPointer = utils.Add1(c.n2IpPointer)
 	c.n3IpPointer = utils.Add1(c.n3IpPointer)
 	c.addGnb(g)
@@ -387,8 +345,10 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 }
 
 func (c *Controller) createAndAddUE() *ue.UE {
+	c.ueInfoMutex.Lock()
 	logger.ControllerLog.Infof("Creating UE: %v", c.supiPointer)
-	u := c.templateUE.Copy(c.supiPointer, c.ueIdPointer, c.pduSessionIdPointer)
+	//u := c.templateUE.Copy(c.supiPointer, c.ueIdPointer, c.pduSessionIdPointer)
+	u := c.templateUE.Copy(c.supiPointer, c.ueIdPointer, 0)
 	imsi, err := strconv.ParseUint(strings.Split(c.supiPointer, "-")[1], 10, 64)
 	if err != nil {
 		logger.ControllerLog.Errorf("create ue failed: %+v", err)
@@ -397,48 +357,101 @@ func (c *Controller) createAndAddUE() *ue.UE {
 	c.supiPointer = fmt.Sprintf("imsi-%v", imsi+1)
 	c.ueIdPointer += 1
 	c.pduSessionIdPointer += u.GetPDUSessionNum()
+	c.ueInfoMutex.Unlock()
+
 	c.addUE(u)
+	c.ueNumOfCurrentGnbAdd1()
 	return u
 }
 
-func (c *Controller) getN2Ip() net.IP {
-	ip := c.n2IpPointer
-	res, flag := add1(ip[15])
-	if flag == 0 {
-		ip[15] = res
-		c.n2IpPointer = ip
-		return ip
+func (c *Controller) emulateOneUEUserPlane(setupPDUSession bool) {
+	// create UE
+	currentUE := c.createAndAddUE()
+	currentUE.Run()
+	defer currentUE.Stop()
+
+	if c.getEmulatedUeNum()%c.uePerGnb == 1 || c.uePerGnb == 1 {
+		c.ueNumOfCurrentGnbClear()
+		c.gnbCounterAdd1()
+		// create gnb
+		if len(c.gnbList) == int(c.n2IpNum) || len(c.gnbList) == int(c.n3IpNum) {
+			logger.ControllerLog.Errorf("can not create more gNB")
+			return
+		}
+		err := c.createAndAddGnb().Run()
+		if err != nil {
+			logger.ControllerLog.Errorf("create gnb failed: %+v", err)
+			return
+		}
 	}
-	res, flag = add1(ip[14])
-	if flag == 0 {
-		ip[14] = res
-		c.n2IpPointer = ip
-		return ip
+
+	logger.ControllerLog.Debugf("UE %v is using No.%v GNB", currentUE.GetSUPI(), int(currentUE.GetID()/uint64(c.uePerGnb)))
+	currentGNB := c.getGnbByIndex(int(currentUE.GetID() / uint64(c.uePerGnb)))
+	if currentGNB == nil {
+		logger.ControllerLog.Logger.Panicf("GNB empty pointer")
 	}
-	res, flag = add1(ip[13])
-	if flag == 0 {
-		ip[13] = res
-		c.n2IpPointer = ip
-		return ip
+	for !currentGNB.Connected() {
 	}
-	res, flag = add1(ip[12])
-	if flag == 0 {
-		ip[12] = res
-		c.n2IpPointer = ip
-		return ip
+
+	// start RRCSetup
+	currentUE.RRCSetupRequest(currentGNB)
+
+	select {
+	case msg := <-currentUE.Notify:
+		switch msg.(type) {
+		case message.UERegistrationSuccess:
+			logger.ControllerLog.Infof("UE %v Registration Success", currentUE.GetSUPI())
+		}
 	}
-	panic("AMF ip overflow")
+
+	if setupPDUSession {
+		establishOneUEPDUSession(currentUE)
+		logger.ControllerLog.Debugf("UE IP is: %v, TEID is :%v", currentUE.GetIP(), currentGNB.FindUEBySUPI(currentUE.GetSUPI()).GTPTEID)
+	}
 }
 
-func add1(i uint8) (res uint8, flag uint8) {
-	if i == ^uint8(0) {
-		res = 0
-		flag = 1
-	} else {
-		res = i + 1
-		flag = 0
+func establishOneUEPDUSession(u *ue.UE) {
+	if !u.Running() {
+		u.Run()
+		defer u.Stop()
 	}
-	return
+
+	u.EstablishPDUSession(0)
+	select {
+	case msg := <-u.Notify:
+		switch msg.(type) {
+		case message.UEPDUSessionEstablishmentAccept:
+			logger.ControllerLog.Infof("UE %v PDU Session Established", u.GetSUPI())
+		}
+	}
+}
+
+func (c *Controller) emulatedUeNumAdd1() {
+	atomic.AddUint32(&c.emulatedUeNum, 1)
+}
+
+func (c *Controller) getEmulatedUeNum() uint32 {
+	return atomic.LoadUint32(&c.emulatedUeNum)
+}
+
+func (c *Controller) ueNumOfCurrentGnbAdd1() {
+	atomic.AddUint32(&c.ueNumOfCurrentGnb, 1)
+}
+
+func (c *Controller) ueNumOfCurrentGnbClear() {
+	atomic.StoreUint32(&c.ueNumOfCurrentGnb, 0)
+}
+
+func (c *Controller) getUeNumOfCurrentGnb() uint32 {
+	return atomic.LoadUint32(&c.ueNumOfCurrentGnb)
+}
+
+func (c *Controller) gnbCounterAdd1() {
+	atomic.AddUint32(&c.gnbCounter, 1)
+}
+
+func (c *Controller) getGnbCounter() uint32 {
+	return atomic.LoadUint32(&c.gnbCounter)
 }
 
 func calcRealMaxUeNum(n2IpNum, n3IpNum, uePerGnb, supiNum uint32, ueNum uint32) uint32 {

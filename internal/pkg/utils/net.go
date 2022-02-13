@@ -6,10 +6,12 @@ import (
 )
 
 func Add1(ip net.IP) net.IP {
-	for i := len(ip) - 1; i >= 0; i-- {
-		if ip[i] < 255 {
-			ip[i]++
-			return ip
+	newIp := make([]byte, 16)
+	copy(newIp, ip)
+	for i := len(newIp) - 1; i >= 0; i-- {
+		if newIp[i] < 255 {
+			newIp[i]++
+			return newIp
 		}
 	}
 	return ip

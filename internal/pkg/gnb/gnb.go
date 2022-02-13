@@ -105,6 +105,12 @@ func (g *GNB) Copy(name string) *GNB {
 	gnb := *g
 	gnb.name = name
 	gnb.logger = logger.GnbLog.WithFields(logrus.Fields{"name": name})
+	gnb.Notify = make(chan interface{}, 1)
+	gnb.ueMapBySupi = sync.Map{}
+	gnb.ueMapByRANUENGAPID = sync.Map{}
+	gnb.rANUENGAPIDPointerMutex = sync.Mutex{}
+	gnb.sctpConn = &sctp.SCTPConn{}
+	gnb.running = false
 	mqueue.NewQueue(name)
 	return &gnb
 }
@@ -177,6 +183,7 @@ func (g *GNB) Stop() {
 	g.sctpConn.Close()
 	g.running = false
 	g.gnbAmf.Connected = false
+	g.logger.Debugf("GNB stop")
 }
 
 func (g *GNB) connectToAmf() error {

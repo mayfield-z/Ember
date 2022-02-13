@@ -170,6 +170,7 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 	}
 
 	g.gnbAmf.Connected = true
+	g.Notify <- message.GNBSetupSuccess{}
 }
 
 func (g *GNB) handleNGSetupFailure(pdu *ngapType.NGAPPDU) {
