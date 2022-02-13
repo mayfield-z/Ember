@@ -11,7 +11,6 @@ import (
 	"github.com/mayfield-z/ember/internal/pkg/ue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"math"
 	"net"
@@ -52,7 +51,6 @@ type Controller struct {
 	initPDUWhenAllUERegistered bool
 	amfIp                      net.IP
 	amfPort                    int
-	configPath                 string
 
 	initialed              bool
 	supiPointer            string
@@ -101,17 +99,16 @@ func (c *Controller) addUE(ue *ue.UE) {
 	c.ueList = append(c.ueList, ue)
 }
 
-func (c *Controller) Init(configPath string) error {
+func (c *Controller) Init() error {
 	// do not change exec order
-	logger.ControllerLog.Debugf("Start inital controller, config file path: %v", configPath)
+	logger.ControllerLog.Debugf("Start inital controller")
 	c.ctx, c.cancelFunc = context.WithCancel(context.Background())
 	c.globalRANNodeIDPointer = 1
 	c.nrCellIdentityPointer = 1
 	c.ueIdPointer = 0
 	c.pduSessionIdPointer = 0
-	c.configPath = configPath
 
-	err := c.parseConfig(configPath)
+	err := c.parseConfig()
 	if err != nil {
 		logger.ControllerLog.Errorf("Controller init failed: %+v", err)
 	}
@@ -121,24 +118,11 @@ func (c *Controller) Init(configPath string) error {
 }
 
 func (c *Controller) Reset() {
-	c.Init(c.configPath)
+	c.Init()
 }
 
-func (c *Controller) parseConfig(configPath string) error {
-	viper.SetConfigFile(configPath)
-	err := viper.ReadInConfig()
-	if err != nil {
-		return errors.Wrap(err, "Controller ReadConfig failed")
-	}
-
-	// change to another place?
-	level, err := logrus.ParseLevel(viper.GetString("app.logLevel"))
-	if err != nil {
-		level, _ = logrus.ParseLevel("info")
-	}
-	logger.SetLogLevel(level)
-	logger.AppLog.Infof("Set log level to: %v", level)
-
+func (c *Controller) parseConfig() error {
+	var err error
 	// TODO: check if exist and validation
 	c.supiFrom = viper.GetString("ue.supiFrom")
 	c.supiPointer = c.supiFrom
@@ -283,6 +267,17 @@ func (c *Controller) start() {
 			go c.emulateOneUEUserPlane(!c.initPDUWhenAllUERegistered)
 		}
 	}
+
+	if c.initPDUWhenAllUERegistered {
+		for _, u := range c.ueList {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-ticker.C:
+				go establishOneUEPDUSession(u)
+			}
+		}
+	}
 }
 
 func (c *Controller) Stop() {
@@ -401,6 +396,9 @@ func (c *Controller) emulateOneUEUserPlane(setupPDUSession bool) {
 		switch msg.(type) {
 		case message.UERegistrationSuccess:
 			logger.ControllerLog.Infof("UE %v Registration Success", currentUE.GetSUPI())
+		case message.UERegistrationReject:
+			// TODO: handle reject
+			logger.ControllerLog.Infof("UE %v Registration Reject", currentUE.GetSUPI())
 		}
 	}
 
@@ -421,7 +419,9 @@ func establishOneUEPDUSession(u *ue.UE) {
 	case msg := <-u.Notify:
 		switch msg.(type) {
 		case message.UEPDUSessionEstablishmentAccept:
-			logger.ControllerLog.Infof("UE %v PDU Session Established", u.GetSUPI())
+			logger.ControllerLog.Infof("UE %v PDU Session Establishment Accept", u.GetSUPI())
+		case message.UEPDUSessionEstablishmentReject:
+			logger.ControllerLog.Infof("UE %v PDU Session Establishment Reject", u.GetSUPI())
 		}
 	}
 }

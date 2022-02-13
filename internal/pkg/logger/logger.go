@@ -17,6 +17,7 @@ var (
 	GnbLog        *logrus.Entry
 	UeLog         *logrus.Entry
 	ControllerLog *logrus.Entry
+	ReporterLog   *logrus.Entry
 	QueueLog      *logrus.Entry
 	DpdkLog       *logrus.Entry
 )
@@ -42,6 +43,7 @@ func init() {
 	GnbLog = log.WithFields(logrus.Fields{"category": "Gnb"})
 	UeLog = log.WithFields(logrus.Fields{"category": "Ue"})
 	ControllerLog = log.WithFields(logrus.Fields{"category": "Controller"})
+	ReporterLog = log.WithFields(logrus.Fields{"category": "Reporter"})
 	QueueLog = log.WithFields(logrus.Fields{"category": "Queue"})
 	DpdkLog = log.WithFields(logrus.Fields{"category": "DPDK"})
 }

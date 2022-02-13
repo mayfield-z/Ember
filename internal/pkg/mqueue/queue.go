@@ -2,6 +2,7 @@ package mqueue
 
 import (
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"reflect"
 	"sync"
 )
 
@@ -49,4 +50,12 @@ func SendMessage(message interface{}, nodeName string) {
 func GetMessageChan(nodeName string) chan interface{} {
 	queue := GetQueueByName(nodeName)
 	return queue.Message
+}
+
+func getType(message interface{}) string {
+	if t := reflect.TypeOf(message); t.Kind() == reflect.Ptr {
+		return t.Elem().Name()
+	} else {
+		return t.Name()
+	}
 }

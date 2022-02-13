@@ -215,6 +215,9 @@ func (u *UE) handleDLNASTransport(msg *nas.Message) {
 		u.ip = net.IPv4(ueIp[0], ueIp[1], ueIp[2], ueIp[3])
 		u.smFSM.Event(eventSMPDUSessionEstablishmentAccept)
 		u.Notify <- message.UEPDUSessionEstablishmentAccept{}
+	} else if msg2.GsmHeader.GetMessageType() == nas.MsgTypePDUSessionEstablishmentReject {
+		u.nasLogger.Debug("PDU Session Establishment Reject")
+		u.Notify <- message.UEPDUSessionEstablishmentReject{}
 	}
 }
 
