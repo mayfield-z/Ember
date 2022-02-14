@@ -4,12 +4,14 @@ import (
 	"context"
 	"git.cs.nctu.edu.tw/calee/sctp"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"net"
 	"sync"
+	"time"
 )
 
 const (
@@ -40,7 +42,7 @@ type GNB struct {
 	running                 bool
 	gnbAmf                  utils.GnbAmf
 	sctpConn                *sctp.SCTPConn
-	Notify                  chan interface{}
+	statusReportChannel     chan message.StatusReport
 	logger                  *logrus.Entry
 	ctx                     context.Context
 	cancelFunc              context.CancelFunc
@@ -68,12 +70,12 @@ func NewGNB(name string, globalRANNodeID uint32, mcc, mnc string, nci uint64, ta
 			Sst: sst,
 			Sd:  sd,
 		},
-		running:    false,
-		sctpConn:   nil,
-		Notify:     make(chan interface{}, 1),
-		logger:     logger.GnbLog.WithFields(logrus.Fields{"name": name}),
-		ctx:        ctx,
-		cancelFunc: cancelFunc,
+		running:             false,
+		sctpConn:            nil,
+		statusReportChannel: make(chan message.StatusReport, 1),
+		logger:              logger.GnbLog.WithFields(logrus.Fields{"name": name}),
+		ctx:                 ctx,
+		cancelFunc:          cancelFunc,
 	}
 	copy(g.n2Address[:], n2Address)
 	copy(g.n3Address[:], n3Address)
@@ -105,7 +107,7 @@ func (g *GNB) Copy(name string) *GNB {
 	gnb := *g
 	gnb.name = name
 	gnb.logger = logger.GnbLog.WithFields(logrus.Fields{"name": name})
-	gnb.Notify = make(chan interface{}, 1)
+	gnb.statusReportChannel = make(chan message.StatusReport, 1)
 	gnb.ueMapBySupi = sync.Map{}
 	gnb.ueMapByRANUENGAPID = sync.Map{}
 	gnb.rANUENGAPIDPointerMutex = sync.Mutex{}
@@ -141,7 +143,7 @@ func (g *GNB) SetN3Addresses(ip net.IP) *GNB {
 }
 
 func (g *GNB) getMessageChan() chan interface{} {
-	return mqueue.GetMessageChan(g.name)
+	return mqueue.GetMessageChannel(g.name)
 }
 
 func (g *GNB) FindUEBySUPI(supi string) *utils.GnbUe {
@@ -227,4 +229,21 @@ func (g *GNB) allocateRANUENGAPID() int64 {
 		}
 	}
 	return rANUENGAPID
+}
+
+func (g *GNB) SendStatusReport(event message.Event) {
+	statusReport := message.StatusReport{
+		NodeName: g.name,
+		NodeType: message.GNB,
+		Event:    event,
+		Time:     time.Now(),
+	}
+	g.statusReportChannel <- statusReport
+	if r := mqueue.GetQueue("reporter"); r != nil {
+		mqueue.SendMessage(statusReport, "reporter")
+	}
+}
+
+func (g *GNB) StatusReport() <-chan message.StatusReport {
+	return g.statusReportChannel
 }

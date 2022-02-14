@@ -22,10 +22,11 @@ import (
 )
 
 var (
-	controller = Controller{}
+	controller = Controller{name: "controller"}
 )
 
 type Controller struct {
+	name                       string
 	gnbList                    []*gnb.GNB
 	ueList                     []*ue.UE
 	templateGnb                *gnb.GNB
@@ -34,6 +35,8 @@ type Controller struct {
 	n3Interface                *net.Interface
 	n2OriginalAddresses        []net.Addr
 	n3OriginalAddresses        []net.Addr
+	n2AddedIp                  []net.IP
+	n3AddedIp                  []net.IP
 	gnbName                    string
 	n2IpFrom                   net.IP
 	n2IpTo                     net.IP
@@ -53,6 +56,7 @@ type Controller struct {
 	amfPort                    int
 
 	initialed              bool
+	running                bool
 	supiPointer            string
 	n2IpPointer            net.IP
 	n3IpPointer            net.IP
@@ -61,15 +65,19 @@ type Controller struct {
 	globalRANNodeIDPointer uint32
 	nrCellIdentityPointer  uint64
 
-	ueNumOfCurrentGnb uint32
+	ueNumOfCurrentGnb uint32 // atomic
 	emulatedUeNum     uint32 // atomic
 	gnbCounter        uint32 // atomic
 
-	ctx          context.Context
-	cancelFunc   context.CancelFunc
-	ueListMutex  sync.Mutex
-	ueInfoMutex  sync.Mutex
-	gnbListMutex sync.Mutex
+	ctx                 context.Context
+	cancelFunc          context.CancelFunc
+	wg                  *sync.WaitGroup
+	statusReportChannel chan message.StatusReport
+	n2AddedIpMutex      sync.Mutex
+	n3AddedIpMutex      sync.Mutex
+	ueListMutex         sync.Mutex
+	ueInfoMutex         sync.Mutex
+	gnbListMutex        sync.Mutex
 }
 
 func Self() *Controller {
@@ -107,6 +115,7 @@ func (c *Controller) Init() error {
 	c.nrCellIdentityPointer = 1
 	c.ueIdPointer = 0
 	c.pduSessionIdPointer = 0
+	c.wg = &sync.WaitGroup{}
 
 	err := c.parseConfig()
 	if err != nil {
@@ -177,9 +186,9 @@ func (c *Controller) parseConfig() error {
 	logger.ControllerLog.Infof("Real UE max is: %v, register %v ue per second", c.realMaxUe, c.uePerSec)
 	logger.ControllerLog.Infof("%v UE per gNB, will use %v gnb", c.uePerGnb, math.Ceil(float64(c.realMaxUe)/float64(c.uePerGnb)))
 	if c.initPDUWhenAllUERegistered {
-		logger.ControllerLog.Infof("Will inital PDU when all UE registered in core")
+		logger.ControllerLog.Infof("Will inital PDU after all UE registered in core")
 	} else {
-		logger.ControllerLog.Infof("Will inital PDU when every UE registered in core")
+		logger.ControllerLog.Infof("Will inital PDU once UE registered in core")
 	}
 
 	c.amfIp = net.ParseIP(viper.GetString("amf.ip"))
@@ -248,6 +257,7 @@ func (c *Controller) Start() {
 		logger.ControllerLog.Errorf("Start controller before initial it")
 		return
 	}
+	c.running = true
 	go c.start()
 }
 
@@ -257,6 +267,7 @@ func (c *Controller) start() {
 	ueIntervalInMicrosecond := int64(math.Ceil(float64(1000000) / c.uePerSec))
 	ticker := time.NewTicker(time.Duration(ueIntervalInMicrosecond) * time.Microsecond)
 	defer ticker.Stop()
+	c.SendStatusReport(message.ControllerStart)
 
 	for c.emulatedUeNum < c.realMaxUe {
 		select {
@@ -264,6 +275,7 @@ func (c *Controller) start() {
 			return
 		case <-ticker.C:
 			c.emulatedUeNumAdd1()
+			c.wg.Add(1)
 			go c.emulateOneUEUserPlane(!c.initPDUWhenAllUERegistered)
 		}
 	}
@@ -274,41 +286,45 @@ func (c *Controller) start() {
 			case <-c.ctx.Done():
 				return
 			case <-ticker.C:
-				go establishOneUEPDUSession(u)
+				go c.establishOneUEPDUSession(u)
 			}
 		}
 	}
+
+	c.wg.Wait()
+	c.Stop()
+}
+
+func (c *Controller) Done() <-chan struct{} {
+	return c.ctx.Done()
 }
 
 func (c *Controller) Stop() {
-	c.cancelFunc()
-	c.cleanUp()
+	if c.running {
+		c.cancelFunc()
+		c.cleanUp()
+		c.running = false
+	}
 }
 
 func (c *Controller) cleanUp() {
-	addrs, err := c.n2Interface.Addrs()
-	if err != nil {
-		logger.ControllerLog.Fatal(err)
-	}
-	for _, addr := range addrs {
-		if !utils.ExistsInAddrList(addr, c.n2OriginalAddresses) {
-			err = utils.DelAddrFromInterface(addr, c.n2Interface)
-			if err != nil {
-				logger.ControllerLog.Fatal(err)
-			}
+	c.n2AddedIpMutex.Lock()
+	defer c.n2AddedIpMutex.Unlock()
+	for _, ip := range c.n2AddedIp {
+		logger.ControllerLog.Debugf("deleting N2 IP addresses: %v", ip)
+		err := utils.DelIpFromInterface(ip, c.n2Interface)
+		if err != nil {
+			logger.ControllerLog.Errorf("can not del N2 IP addresses: %v, %v", ip, err)
 		}
 	}
 
-	addrs, err = c.n3Interface.Addrs()
-	if err != nil {
-		logger.ControllerLog.Fatal(err)
-	}
-	for _, addr := range addrs {
-		if !utils.ExistsInAddrList(addr, c.n3OriginalAddresses) {
-			err = utils.DelAddrFromInterface(addr, c.n3Interface)
-			if err != nil {
-				logger.ControllerLog.Fatal(err)
-			}
+	c.n3AddedIpMutex.Lock()
+	defer c.n3AddedIpMutex.Unlock()
+	for _, ip := range c.n3AddedIp {
+		logger.ControllerLog.Debugf("deleting N3 IP addresses: %v", ip)
+		err := utils.DelIpFromInterface(ip, c.n3Interface)
+		if err != nil {
+			logger.ControllerLog.Errorf("can not del N3 IP addresses: %v, %v", ip, err)
 		}
 	}
 }
@@ -326,11 +342,19 @@ func (c *Controller) createAndAddGnb() *gnb.GNB {
 	err := utils.AddIpToInterface(c.n2IpPointer, c.n2Interface)
 	if err != nil {
 		logger.ControllerLog.Fatalf("Add N2 Address to interface %s failed: %v", c.n2Interface.Name, err)
+	} else {
+		c.n2AddedIpMutex.Lock()
+		c.n2AddedIp = append(c.n2AddedIp, c.n2IpPointer)
+		c.n2AddedIpMutex.Unlock()
 	}
 
 	err = utils.AddIpToInterface(c.n3IpPointer, c.n3Interface)
 	if err != nil {
 		logger.ControllerLog.Fatalf("Add N3 Address to interface %s failed: %v", c.n3Interface.Name, err)
+	} else {
+		c.n3AddedIpMutex.Lock()
+		c.n3AddedIp = append(c.n3AddedIp, c.n3IpPointer)
+		c.n3AddedIpMutex.Unlock()
 	}
 
 	c.n2IpPointer = utils.Add1(c.n2IpPointer)
@@ -361,9 +385,10 @@ func (c *Controller) createAndAddUE() *ue.UE {
 
 func (c *Controller) emulateOneUEUserPlane(setupPDUSession bool) {
 	// create UE
+	c.SendStatusReport(message.EmulateUE)
 	currentUE := c.createAndAddUE()
 	currentUE.Run()
-	defer currentUE.Stop()
+	defer currentUE.Stop(c.wg)
 
 	if c.getEmulatedUeNum()%c.uePerGnb == 1 || c.uePerGnb == 1 {
 		c.ueNumOfCurrentGnbClear()
@@ -373,6 +398,7 @@ func (c *Controller) emulateOneUEUserPlane(setupPDUSession bool) {
 			logger.ControllerLog.Errorf("can not create more gNB")
 			return
 		}
+		c.SendStatusReport(message.EmulateGNB)
 		err := c.createAndAddGnb().Run()
 		if err != nil {
 			logger.ControllerLog.Errorf("create gnb failed: %+v", err)
@@ -392,8 +418,8 @@ func (c *Controller) emulateOneUEUserPlane(setupPDUSession bool) {
 	currentUE.RRCSetupRequest(currentGNB)
 
 	select {
-	case msg := <-currentUE.Notify:
-		switch msg.(type) {
+	case msg := <-currentUE.StatusReport():
+		switch msg.Event {
 		case message.UERegistrationSuccess:
 			logger.ControllerLog.Infof("UE %v Registration Success", currentUE.GetSUPI())
 		case message.UERegistrationReject:
@@ -403,21 +429,21 @@ func (c *Controller) emulateOneUEUserPlane(setupPDUSession bool) {
 	}
 
 	if setupPDUSession {
-		establishOneUEPDUSession(currentUE)
+		c.establishOneUEPDUSession(currentUE)
 		logger.ControllerLog.Debugf("UE IP is: %v, TEID is :%v", currentUE.GetIP(), currentGNB.FindUEBySUPI(currentUE.GetSUPI()).GTPTEID)
 	}
 }
 
-func establishOneUEPDUSession(u *ue.UE) {
+func (c *Controller) establishOneUEPDUSession(u *ue.UE) {
 	if !u.Running() {
 		u.Run()
-		defer u.Stop()
+		defer u.Stop(c.wg)
 	}
 
 	u.EstablishPDUSession(0)
 	select {
-	case msg := <-u.Notify:
-		switch msg.(type) {
+	case msg := <-u.StatusReport():
+		switch msg.Event {
 		case message.UEPDUSessionEstablishmentAccept:
 			logger.ControllerLog.Infof("UE %v PDU Session Establishment Accept", u.GetSUPI())
 		case message.UEPDUSessionEstablishmentReject:
@@ -452,6 +478,24 @@ func (c *Controller) gnbCounterAdd1() {
 
 func (c *Controller) getGnbCounter() uint32 {
 	return atomic.LoadUint32(&c.gnbCounter)
+}
+
+func (c *Controller) SendStatusReport(event message.Event) {
+	statusReport := message.StatusReport{
+		NodeName: c.name,
+		NodeType: message.Controller,
+		Event:    event,
+		Time:     time.Now(),
+	}
+	// no one to send
+	//c.statusReportChannel <- statusReport
+	if r := mqueue.GetQueue("reporter"); r != nil {
+		mqueue.SendMessage(statusReport, "reporter")
+	}
+}
+
+func (c *Controller) StatusReport() <-chan message.StatusReport {
+	return c.statusReportChannel
 }
 
 func calcRealMaxUeNum(n2IpNum, n3IpNum, uePerGnb, supiNum uint32, ueNum uint32) uint32 {

@@ -35,38 +35,35 @@ type NASUplinkPdu struct {
 	SendBy string
 }
 
-type GNBSetupSuccess struct{}
-
-type GNBSetupReject struct{}
-
-type UERRCSetupSuccess struct{}
-
-type UERRCSetupReject struct{}
-
-type UERegistrationSuccess struct{}
-
-type UERegistrationReject struct{}
-
-type UEPDUSessionEstablishmentAccept struct {
-}
-
-type UEPDUSessionEstablishmentReject struct {
-}
-
 type NodeType int
 
 const (
 	UE NodeType = iota
 	GNB
+	Controller
 )
 
-type Event string
+type Event int
 
-const ()
+//TODO: more events
+const (
+	GNBSetupSuccess Event = iota
+	GNBSetupReject
+	UERRCSetupSuccess
+	UERRCSetupReject
+	UERegistrationSuccess
+	UERegistrationReject
+	UEPDUSessionEstablishmentAccept
+	UEPDUSessionEstablishmentReject
+	ControllerStart
+	ControllerStop
+	EmulateUE
+	EmulateGNB
+)
 
 type StatusReport struct {
 	NodeName string
 	NodeType NodeType
-	Event    interface{}
+	Event    Event
 	Time     time.Time
 }

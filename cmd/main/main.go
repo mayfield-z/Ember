@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/mayfield-z/ember/internal/pkg/controller"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
 	"github.com/mayfield-z/ember/internal/pkg/reporter"
@@ -10,12 +11,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
 	reporter.Self().Start()
 	controller.Self().Start()
-	select {}
+	<-controller.Self().Done()
+	exit(0)
 }
 
 func exitHandler() {
@@ -24,8 +27,7 @@ func exitHandler() {
 	go func() {
 		<-c
 		logger.AppLog.Info("shutdown signal received, exiting...")
-		controller.Self().Stop()
-		os.Exit(0)
+		exit(1)
 	}()
 }
 
@@ -36,6 +38,9 @@ func init() {
 	configPath := flag.String("c", "../config/example.toml", "config path")
 	//configPath := "../config/example.toml"
 	flag.Parse()
+	viper.SetDefault("reporter.outputFolder", "./output")
+	viper.SetDefault("reporter.outputFileName", fmt.Sprintf("test-report-%s.csv", time.Now().Format("2006-01-02-15:04:05")))
+	viper.SetDefault("reporter.recordGranularity", "1s")
 	viper.SetConfigFile(*configPath)
 	err := viper.ReadInConfig()
 	if err != nil {
@@ -63,4 +68,10 @@ func init() {
 		logger.AppLog.Errorf("reporter init failed, exiting...")
 		os.Exit(1)
 	}
+}
+
+func exit(code int) {
+	controller.Self().Stop()
+	reporter.Self().Stop()
+	os.Exit(code)
 }

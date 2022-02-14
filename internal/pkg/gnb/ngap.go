@@ -170,13 +170,14 @@ func (g *GNB) handleNGSetupResponse(pdu *ngapType.NGAPPDU) {
 	}
 
 	g.gnbAmf.Connected = true
-	g.Notify <- message.GNBSetupSuccess{}
+	g.SendStatusReport(message.GNBSetupSuccess)
 }
 
 func (g *GNB) handleNGSetupFailure(pdu *ngapType.NGAPPDU) {
 	// TODO: implement
 	g.logger.Debugf("handle NGSetupFailure")
 	g.gnbAmf.Connected = false
+	g.SendStatusReport(message.GNBSetupReject)
 }
 
 func (g *GNB) handleDownlinkNASTransport(pdu *ngapType.NGAPPDU) {

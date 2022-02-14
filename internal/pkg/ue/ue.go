@@ -15,6 +15,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"net"
+	"sync"
+	"time"
 )
 
 const (
@@ -105,16 +107,16 @@ type UE struct {
 
 	ip net.IP
 
-	id        uint64
-	snn       string
-	parentCtx context.Context
-	ctx       context.Context
-	cancel    context.CancelFunc
-	running   bool
-	gnb       utils.UeGnb
-	Notify    chan interface{}
-	logger    *logrus.Entry
-	nasLogger *logrus.Entry
+	id                  uint64
+	snn                 string
+	parentCtx           context.Context
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	running             bool
+	gnb                 utils.UeGnb
+	statusReportChannel chan message.StatusReport
+	logger              *logrus.Entry
+	nasLogger           *logrus.Entry
 }
 
 func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate string, pduSessions []utils.PDU, id uint64, parent context.Context) *UE {
@@ -169,13 +171,13 @@ func NewUE(supi string, mcc, mnc, key, op, opType, amf, ulDataRate, dlDataRate s
 		//	nil,
 		//	nil,
 		//),
-		id:        id,
-		parentCtx: parent,
-		ctx:       ctx,
-		cancel:    cancelFunc,
-		Notify:    make(chan interface{}, 1),
-		logger:    logger.UeLog.WithFields(logrus.Fields{"name": supi}),
-		nasLogger: logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"}),
+		id:                  id,
+		parentCtx:           parent,
+		ctx:                 ctx,
+		cancel:              cancelFunc,
+		statusReportChannel: make(chan message.StatusReport, 1),
+		logger:              logger.UeLog.WithFields(logrus.Fields{"name": supi}),
+		nasLogger:           logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"}),
 	}
 	copy(u.pduSessions[:], pduSessions)
 	return &u
@@ -216,14 +218,14 @@ func (u *UE) Copy(supi string, ueId uint64, sessionId uint8) *UE {
 	}
 	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
-	ue.Notify = make(chan interface{})
+	ue.statusReportChannel = make(chan message.StatusReport, 1)
 	ue.ctx, ue.cancel = context.WithCancel(ue.parentCtx)
 	mqueue.NewQueue(supi)
 	return &ue
 }
 
 func (u *UE) getMessageChan() chan interface{} {
-	return mqueue.GetMessageChan(u.supi)
+	return mqueue.GetMessageChannel(u.supi)
 }
 
 func (u *UE) GetPDUSessionNum() uint8 {
@@ -252,10 +254,28 @@ func (u *UE) Running() bool {
 	return u.running
 }
 
-func (u *UE) Stop() {
+func (u *UE) Stop(wg *sync.WaitGroup) {
 	u.logger.Debugf("UE stop")
 	u.cancel()
 	u.running = false
+	wg.Done()
+}
+
+func (u *UE) SendStatusReport(event message.Event) {
+	statusReport := message.StatusReport{
+		NodeName: u.supi,
+		NodeType: message.GNB,
+		Event:    event,
+		Time:     time.Now(),
+	}
+	u.statusReportChannel <- statusReport
+	if r := mqueue.GetQueue("reporter"); r != nil {
+		mqueue.SendMessage(statusReport, "reporter")
+	}
+}
+
+func (u *UE) StatusReport() <-chan message.StatusReport {
+	return u.statusReportChannel
 }
 
 func (u *UE) EstablishPDUSession(pduSessionNumber uint8) {

@@ -214,10 +214,10 @@ func (u *UE) handleDLNASTransport(msg *nas.Message) {
 		ueIp := msg2.PDUSessionEstablishmentAccept.GetPDUAddressInformation()
 		u.ip = net.IPv4(ueIp[0], ueIp[1], ueIp[2], ueIp[3])
 		u.smFSM.Event(eventSMPDUSessionEstablishmentAccept)
-		u.Notify <- message.UEPDUSessionEstablishmentAccept{}
+		u.SendStatusReport(message.UEPDUSessionEstablishmentAccept)
 	} else if msg2.GsmHeader.GetMessageType() == nas.MsgTypePDUSessionEstablishmentReject {
 		u.nasLogger.Debug("PDU Session Establishment Reject")
-		u.Notify <- message.UEPDUSessionEstablishmentReject{}
+		u.SendStatusReport(message.UEPDUSessionEstablishmentReject)
 	}
 }
 
@@ -285,7 +285,7 @@ func (u *UE) handleRegistrationAccept(msg *nas.Message) {
 	}
 
 	u.rmFSM.Event(eventRMRegistrationAccept)
-	u.Notify <- message.UERegistrationSuccess{}
+	u.SendStatusReport(message.UERegistrationSuccess)
 	mqueue.SendMessage(message.NASUplinkPdu{PDU: registrationComplete, SendBy: u.supi}, u.gnb.Name)
 }
 

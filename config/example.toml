@@ -2,7 +2,7 @@ title = "Example Config"
 
 [app]
 # error, debug, warn, info, trace
-logLevel = "debug"
+logLevel = "info"
 # logPath = ""
 
 [controller]
@@ -12,10 +12,15 @@ n2IpTo = "223.193.7.239"
 n3Interface = "ens3"
 n3IpFrom = "223.193.7.240"
 n3IpTo = "223.193.7.249"
-ueNum = 3
-uePerGnb = 2
+ueNum = 20
+uePerGnb = 8
 uePerSec = 3
 initPDUWhenAllUERegistered = false
+
+[reporter]
+outputFolder = "./output"
+recordGranularity = "100ms" # Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
+exportRawData = true
 
 [gnb]
 name = "test-gnb"
@@ -38,17 +43,17 @@ op = "8e27b6af0e692e750f32667a3b14605d"
 opType = "OPC"
 amf = "8000"
 
-    [ue.dataRate]
-    uplink = "full"
-    downlink = "full"
+[ue.dataRate]
+uplink = "full"
+downlink = "full"
 
-    [ue.sessions]
-        [ue.sessions.0]
-        # IPv4, IPv6, IPv4AndIPv6
-        type = "IPv4"
-        apn = "internet"
-        sst = 0x01
-        sd = 0x010203
+[ue.sessions]
+[ue.sessions.0]
+# IPv4, IPv6, IPv4AndIPv6
+type = "IPv4"
+apn = "internet"
+sst = 0x01
+sd = 0x010203
 
 
 [amf]

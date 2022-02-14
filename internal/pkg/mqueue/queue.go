@@ -2,6 +2,7 @@ package mqueue
 
 import (
 	"github.com/mayfield-z/ember/internal/pkg/logger"
+	"github.com/mayfield-z/ember/internal/pkg/message"
 	"reflect"
 	"sync"
 )
@@ -29,7 +30,7 @@ func DelQueue(name string) {
 	logger.QueueLog.Debugf("Del queue: %v", name)
 }
 
-func GetQueueByName(name string) *Queue {
+func GetQueue(name string) *Queue {
 	if q, ok := queueMap.Load(name); ok {
 		return q.(*Queue)
 	} else {
@@ -37,18 +38,24 @@ func GetQueueByName(name string) *Queue {
 	}
 }
 
-func SendMessage(message interface{}, nodeName string) {
-	logger.QueueLog.Debugf("sending message %T to node \"%v\"", message, nodeName)
-	queue := GetQueueByName(nodeName)
+func SendMessage(msg interface{}, nodeName string) {
+	switch msg.(type) {
+	case message.StatusReport:
+		logger.QueueLog.Debugf("%v is sending status report, event: %+v to %v", msg.(message.StatusReport).NodeName, msg.(message.StatusReport).Event, nodeName)
+	default:
+		logger.QueueLog.Debugf("sending message %T to node \"%v\"", msg, nodeName)
+
+	}
+	queue := GetQueue(nodeName)
 	if queue == nil {
 		logger.QueueLog.Errorf("cannot find queue %v", nodeName)
 		return
 	}
-	queue.Message <- message
+	queue.Message <- msg
 }
 
-func GetMessageChan(nodeName string) chan interface{} {
-	queue := GetQueueByName(nodeName)
+func GetMessageChannel(nodeName string) chan interface{} {
+	queue := GetQueue(nodeName)
 	return queue.Message
 }
 
