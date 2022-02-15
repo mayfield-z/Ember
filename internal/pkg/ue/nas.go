@@ -379,7 +379,7 @@ func (u *UE) buildULNasTransportPDUSessionEstablishmentRequest(pduSessionNumber 
 	ulNasTransport.RequestType.SetIei(nasMessage.ULNASTransportRequestTypeType)
 	ulNasTransport.RequestType.SetRequestTypeValue(nasMessage.ULNASTransportRequestTypeInitialRequest)
 
-	dnn := []byte(pduSession.Apn)
+	dnn := pduSession.Apn
 	ulNasTransport.DNN = new(nasType.DNN)
 	ulNasTransport.DNN.SetIei(nasMessage.ULNASTransportDNNType)
 	ulNasTransport.DNN.SetLen(uint8(len(dnn)))

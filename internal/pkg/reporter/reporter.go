@@ -90,7 +90,7 @@ func (r *Reporter) parseConfig() error {
 
 func (r *Reporter) Start() {
 	if !r.initialed {
-		logger.ControllerLog.Errorf("Start controller before initial it")
+		logger.ControllerLog.Errorf("Start reporter before initial it")
 		return
 	}
 	go r.start()
@@ -145,7 +145,7 @@ func (r *Reporter) processStatus() {
 		}
 	}
 	r.processedStatus = append(r.processedStatus, status)
-	_, err := r.outputFile.WriteString(fmt.Sprintf("%v,%v,%v,%v", status.EmulatedGnbNum, status.SetupSuccessGnbNum, status.EmulatedUeNum, status.PDUSessionEstablishmentSuccessUeNum))
+	_, err := r.outputFile.WriteString(fmt.Sprintf("%v,%v,%v,%v\n", status.EmulatedGnbNum, status.SetupSuccessGnbNum, status.EmulatedUeNum, status.PDUSessionEstablishmentSuccessUeNum))
 	if err != nil {
 		r.logger.Errorf("Failed to write to file %s", err)
 	}
