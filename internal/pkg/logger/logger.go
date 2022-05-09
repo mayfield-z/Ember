@@ -1,8 +1,13 @@
 package logger
 
 import (
+	"fmt"
 	formatter "github.com/antonfisher/nested-logrus-formatter"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
+	"io"
+	"os"
+	"path"
 	"time"
 )
 
@@ -50,4 +55,23 @@ func init() {
 
 func SetLogLevel(level logrus.Level) {
 	log.SetLevel(level)
+}
+
+func SetOutputFolder(folder string) {
+	err := os.MkdirAll(folder, 0777)
+	if err != nil {
+		log.Errorf("Failed to create log folder: %s", err)
+		return
+	}
+	logFile, err := os.OpenFile(path.Join(folder, fmt.Sprintf("%s.log", viper.GetString("startTime"))), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Errorf("Failed to open log file: %s", err)
+		return
+	}
+	addOutput(logFile)
+}
+
+func addOutput(writer io.Writer) {
+	mw := io.MultiWriter(writer, log.Out)
+	log.SetOutput(mw)
 }

@@ -3,18 +3,21 @@ package gnb
 import (
 	"encoding/binary"
 	"git.cs.nctu.edu.tw/calee/sctp"
-	"github.com/free5gc/aper"
-	"github.com/free5gc/ngap"
-	"github.com/free5gc/ngap/ngapType"
+	"github.com/mayfield-z/ember/internal/pkg/aper"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
 	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
+	"github.com/mayfield-z/ember/internal/pkg/ngap"
+	"github.com/mayfield-z/ember/internal/pkg/ngap/ngapType"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"net"
+	"syscall"
 )
 
-func Dial(localIp, amfIp net.IP, port int) (*sctp.SCTPConn, error) {
+var readTimeout = syscall.Timeval{Sec: 2, Usec: 0}
+
+func Dial(name string, localIp, amfIp net.IP, port int) (*sctp.SCTPConn, error) {
 	laddr := &sctp.SCTPAddr{
 		IPAddrs: []net.IPAddr{
 			{
@@ -33,7 +36,19 @@ func Dial(localIp, amfIp net.IP, port int) (*sctp.SCTPConn, error) {
 		},
 		Port: port,
 	}
-	conn, err := sctp.DialSCTPExt("sctp", laddr, raddr, sctp.InitMsg{NumOstreams: sctp.SCTP_MAX_STREAM, MaxInitTimeout: 1000, MaxAttempts: 3}, nil, nil)
+	conn, err := sctp.DialSCTPExt(name, laddr, raddr, sctp.InitMsg{
+		NumOstreams:    100,
+		MaxInitTimeout: 2,
+		MaxAttempts:    3,
+		MaxInstreams:   100,
+	}, &sctp.RtoInfo{
+		SrtoAssocID: 5,
+		SrtoInitial: 500,
+		SrtoMax:     1500,
+		StroMin:     100,
+	}, &sctp.AssocInfo{
+		AsocMaxRxt: 4,
+	})
 	if err != nil {
 		return nil, errors.WithMessage(err, "Dial failed")
 	}
@@ -90,7 +105,14 @@ func Dial(localIp, amfIp net.IP, port int) (*sctp.SCTPConn, error) {
 	} else {
 		logger.NgapLog.Debugf("Set read buffer to %d bytes", readBufSize)
 	}
-
+	if err = conn.SetReadTimeout(readTimeout); err != nil {
+		logger.NgapLog.Errorf("Set read timeout error: %+v, accept failed", err)
+		if err = conn.Close(); err != nil {
+			logger.NgapLog.Errorf("Close error: %+v", err)
+		}
+	} else {
+		logger.NgapLog.Debugf("Set read timeout to %d seconds", readTimeout)
+	}
 	return conn, nil
 
 }
@@ -344,7 +366,8 @@ func (g *GNB) handlePDUSessionResourceSetupRequest(pdu *ngapType.NGAPPDU) {
 	ue.PDUSessionID = pduSessionID
 	ue.QosFlowIdentifier = qosFlowIdentifier
 	ue.FiveQI = fiveQI
-	ue.GTPTEID = gTPTEID
+	ue.RawUplinkTEID = gTPTEID
+	ue.UplinkTEID = binary.BigEndian.Uint32(gTPTEID)
 	ue.TransportLayerUPFAddress = transportLayerAddress
 
 	p, err := g.buildPDUSessionResourceSetupResponse(ue)
@@ -697,7 +720,7 @@ func (g *GNB) buildPDUSessionResourceSetupResponse(ue *utils.GnbUe) ([]byte, err
 	upTransportLayerInformation.GTPTunnel = new(ngapType.GTPTunnel)
 	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.Bytes = ue.TransportLayerGNBAddress[12:16]
 	upTransportLayerInformation.GTPTunnel.TransportLayerAddress.Value.BitLength = 32
-	upTransportLayerInformation.GTPTunnel.GTPTEID.Value = ue.GTPTEID
+	upTransportLayerInformation.GTPTunnel.GTPTEID.Value = ue.RawUplinkTEID
 
 	associatedQosFlowItem := new(ngapType.AssociatedQosFlowItem)
 	associatedQosFlowItem.QosFlowIdentifier.Value = ue.QosFlowIdentifier

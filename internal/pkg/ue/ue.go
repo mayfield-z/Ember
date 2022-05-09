@@ -3,19 +3,18 @@ package ue
 import (
 	"context"
 	"fmt"
-	"github.com/free5gc/nas/security"
-	"github.com/free5gc/ngap/ngapType"
 	"github.com/looplab/fsm"
 	"github.com/mayfield-z/ember/internal/pkg/gnb"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
 	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
+	"github.com/mayfield-z/ember/internal/pkg/nas/security"
+	"github.com/mayfield-z/ember/internal/pkg/ngap/ngapType"
 	"github.com/mayfield-z/ember/internal/pkg/timer"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -203,11 +202,19 @@ func (u *UE) GetIP() net.IP {
 	return u.ip
 }
 
+func (u *UE) SetID(id uint64) {
+	u.id = id
+}
+
 func (u *UE) GetID() uint64 {
 	return u.id
 }
 
-func (u *UE) Copy(supi string, ueId uint64, sessionId uint8) *UE {
+func (u *UE) Ctx() context.Context {
+	return u.ctx
+}
+
+func (u *UE) Copy(supi string, ueId uint64, sessionId uint8, timeout time.Duration) *UE {
 	// TODO: check source ue state
 	ue := *u
 	ue.supi = supi
@@ -219,7 +226,8 @@ func (u *UE) Copy(supi string, ueId uint64, sessionId uint8) *UE {
 	ue.logger = logger.UeLog.WithFields(logrus.Fields{"name": supi})
 	ue.nasLogger = logger.UeLog.WithFields(logrus.Fields{"name": supi, "part": "NAS"})
 	ue.statusReportChannel = make(chan message.StatusReport, 1)
-	ue.ctx, ue.cancel = context.WithCancel(ue.parentCtx)
+	//ue.ctx, ue.cancel = context.WithTimeout(u.parentCtx, timeout)
+	ue.ctx, ue.cancel = context.WithCancel(u.parentCtx)
 	mqueue.NewQueue(supi)
 	return &ue
 }
@@ -254,11 +262,11 @@ func (u *UE) Running() bool {
 	return u.running
 }
 
-func (u *UE) Stop(wg *sync.WaitGroup) {
-	u.logger.Debugf("UE stop")
+func (u *UE) Stop() {
+	u.logger.Infof("UE stop")
+	u.cleanChannel()
 	u.cancel()
 	u.running = false
-	wg.Done()
 }
 
 func (u *UE) SendStatusReport(event message.Event) {
@@ -306,6 +314,13 @@ func (u *UE) RRCSetupRequest(gnb *gnb.GNB) {
 			SendBy:             u.supi,
 		}
 		mqueue.SendMessage(msg, gnb.NodeName())
+	}
+}
+
+func (u *UE) cleanChannel() {
+	c := u.getMessageChan()
+	for len(c) > 0 {
+		<-c
 	}
 }
 

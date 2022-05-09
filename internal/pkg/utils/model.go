@@ -22,7 +22,8 @@ type GnbUe struct {
 	PDUSessionID             int64
 	QosFlowIdentifier        int64
 	FiveQI                   int64
-	GTPTEID                  []byte
+	RawUplinkTEID            []byte
+	UplinkTEID               uint32
 	TransportLayerUPFAddress net.IP
 	TransportLayerGNBAddress net.IP
 }

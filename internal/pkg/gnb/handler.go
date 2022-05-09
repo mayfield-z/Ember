@@ -2,11 +2,11 @@ package gnb
 
 import (
 	"encoding/hex"
-	"github.com/free5gc/ngap"
-	"github.com/free5gc/ngap/ngapType"
 	"github.com/mayfield-z/ember/internal/pkg/logger"
 	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
+	"github.com/mayfield-z/ember/internal/pkg/ngap"
+	"github.com/mayfield-z/ember/internal/pkg/ngap/ngapType"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"io"
 	"syscall"
@@ -50,6 +50,7 @@ func (g *GNB) handleRRCSetupRequestMessage(msg message.RRCSetupRequest) {
 			TransportLayerGNBAddress: g.n3Address,
 		}
 		g.ueMapBySupi.Store(supi, ue)
+
 		g.sendRRCSetupMessage(supi)
 	}
 	return
@@ -127,6 +128,9 @@ func (g *GNB) sctpHandler(bufsize uint32) {
 			buf := make([]byte, bufsize)
 
 			n, info, notification, err := conn.SCTPRead(buf)
+			if n == 0 || n == -1 {
+				continue
+			}
 			if err != nil {
 				logger.NgapLog.Tracef("Read %d bytes", n)
 				logger.NgapLog.Tracef("Packet content:\n%+v", hex.Dump(buf[:n]))
@@ -206,5 +210,7 @@ func (g *GNB) ngapHandler(buf []byte) {
 		case ngapType.ProcedureCodeNGSetup:
 			g.handleNGSetupFailure(pdu)
 		}
+	default:
+		return
 	}
 }

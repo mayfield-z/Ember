@@ -37,6 +37,8 @@ type GNB struct {
 	// auto
 	ueMapBySupi             sync.Map //map[string]*utils.GnbUe
 	ueMapByRANUENGAPID      sync.Map //map[int64]*utils.GnbUe
+	allUE                   []*utils.GnbUe
+	allUEMutex              sync.Mutex
 	rANUENGAPIDPointer      int64
 	rANUENGAPIDPointerMutex sync.Mutex
 	running                 bool
@@ -137,9 +139,17 @@ func (g *GNB) SetN2Addresses(ip net.IP) *GNB {
 	return g
 }
 
+func (g *GNB) GetN2Addresses() net.IP {
+	return g.n2Address
+}
+
 func (g *GNB) SetN3Addresses(ip net.IP) *GNB {
 	copy(g.n3Address[:], ip)
 	return g
+}
+
+func (g *GNB) GetN3Addresses() net.IP {
+	return g.n3Address
 }
 
 func (g *GNB) getMessageChan() chan interface{} {
@@ -160,11 +170,23 @@ func (g *GNB) FindUEByRANUENGAPID(id int64) *utils.GnbUe {
 	return nil
 }
 
+func (g *GNB) GetAllUE() []*utils.GnbUe {
+	var f func(key interface{}, value interface{}) bool
+	f = func(key interface{}, value interface{}) bool {
+		g.allUE = append(g.allUE, value.(*utils.GnbUe))
+		return true
+	}
+	g.allUEMutex.Lock()
+	defer g.allUEMutex.Unlock()
+	g.ueMapBySupi.Range(f)
+	return g.allUE
+}
+
 func (g *GNB) Run() error {
 	g.running = true
 	g.logger.Debugf("GNB %s is running, N2: %v, N3: %v", g.name, g.n2Address.String(), g.n3Address.String())
 	g.logger.Debugf("SCTP dial %v:%v", g.amfAddress, g.amfPort)
-	conn, err := Dial(g.n2Address, g.amfAddress, g.amfPort)
+	conn, err := Dial("sctp", g.n2Address, g.amfAddress, g.amfPort)
 	if err != nil {
 		g.Stop()
 		return errors.Wrapf(err, "Failed to dial sctp address %v:%v", g.amfAddress, g.amfPort)

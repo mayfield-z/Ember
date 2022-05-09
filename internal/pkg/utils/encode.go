@@ -3,8 +3,8 @@ package utils
 import (
 	"encoding/binary"
 	"encoding/hex"
-	"github.com/free5gc/ngap/logger"
-	"github.com/free5gc/ngap/ngapType"
+	"github.com/mayfield-z/ember/internal/pkg/ngap/logger"
+	"github.com/mayfield-z/ember/internal/pkg/ngap/ngapType"
 	"math"
 	"strings"
 )

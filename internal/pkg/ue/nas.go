@@ -6,13 +6,13 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"github.com/free5gc/nas"
-	"github.com/free5gc/nas/nasConvert"
-	"github.com/free5gc/nas/nasMessage"
-	"github.com/free5gc/nas/nasType"
-	"github.com/free5gc/nas/security"
 	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
+	"github.com/mayfield-z/ember/internal/pkg/nas"
+	"github.com/mayfield-z/ember/internal/pkg/nas/nasConvert"
+	"github.com/mayfield-z/ember/internal/pkg/nas/nasMessage"
+	"github.com/mayfield-z/ember/internal/pkg/nas/nasType"
+	"github.com/mayfield-z/ember/internal/pkg/nas/security"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"github.com/pkg/errors"
 	"net"
@@ -24,7 +24,6 @@ func (u *UE) buildRegistrationRequest(capability bool) ([]byte, error) {
 	m.GmmMessage = nas.NewGmmMessage()
 	m.GmmMessage.SetMessageType(nas.MsgTypeRegistrationRequest)
 
-	// wtf is iei??
 	registrationRequest := nasMessage.NewRegistrationRequest(0)
 	registrationRequest.SetExtendedProtocolDiscriminator(nasMessage.Epd5GSMobilityManagementMessage)
 	registrationRequest.SpareHalfOctetAndSecurityHeaderType.SetSecurityHeaderType(nas.SecurityHeaderTypePlainNas)
@@ -42,9 +41,9 @@ func (u *UE) buildRegistrationRequest(capability bool) ([]byte, error) {
 	mobileIdentity5GS = append(mobileIdentity5GS, msin...)
 	registrationRequest.MobileIdentity5GS.SetLen(uint16(len(mobileIdentity5GS)))
 	registrationRequest.MobileIdentity5GS.SetMobileIdentity5GSContents(mobileIdentity5GS)
-	registrationRequest.UESecurityCapability = new(nasType.UESecurityCapability)
 
 	// UE Security Capability
+	registrationRequest.UESecurityCapability = new(nasType.UESecurityCapability)
 	uESecurityCapability := registrationRequest.UESecurityCapability
 	uESecurityCapability.SetIei(nasMessage.RegistrationRequestUESecurityCapabilityType)
 	uESecurityCapability.SetLen(4)
@@ -222,6 +221,7 @@ func (u *UE) handleDLNASTransport(msg *nas.Message) {
 }
 
 func (u *UE) buildSecurityModeComplete(rinmr uint8) ([]byte, error) {
+	var err error
 	u.nasLogger.Debug("build SecurityModeComplete")
 	registrationRequest, err := u.buildRegistrationRequest(true)
 	if err != nil {

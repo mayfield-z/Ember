@@ -1,21 +1,25 @@
-title = "Example Config"
+title = "free5gc"
 
 [app]
 # error, debug, warn, info, trace
-logLevel = "info"
-# logPath = ""
+logLevel = "debug"
+logFolder = "./logs"
 
 [controller]
 n2Interface = "ens3"
 n2IpFrom = "223.193.7.230"
 n2IpTo = "223.193.7.239"
 n3Interface = "ens3"
-n3IpFrom = "223.193.7.240"
-n3IpTo = "223.193.7.249"
-ueNum = 20
-uePerGnb = 8
-uePerSec = 3
+n3IpFrom = "1.1.1.1"
+n3IpTo = "1.1.1.1"
+dnInterface = "ens3"
+dnIp = "1.1.1.3"
+ueNum = 1
+uePerGnb = 88888
+uePerSec = 10
 initPDUWhenAllUERegistered = false
+emulateUserPlane = true
+userPlaneEmulateUEMaxNum = 100
 
 [reporter]
 outputFolder = "./output"
@@ -34,7 +38,7 @@ sd = 0x010203
 [ue]
 # only support imsi now
 supiType = "imsi"
-supiFrom = "imsi-208930000000100"
+supiFrom = "imsi-208930000000200"
 supiTo = "imsi-208930000010100"
 mcc = "208"
 mnc = "93"
@@ -58,5 +62,8 @@ sd = 0x010203
 
 [amf]
 ip = "223.193.7.254"
-# ip = "127.0.0.1"
 port = 38412
+
+[upf]
+ip = "1.1.1.2"
+port = 2152

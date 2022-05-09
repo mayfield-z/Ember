@@ -30,7 +30,8 @@ func AddIpToInterface(ip net.IP, iface *net.Interface) error {
 			return nil
 		}
 	}
-	cmd := exec.Command("ip", "addr", "add", ip.String(), "dev", iface.Name)
+	//TODO: custom netmask
+	cmd := exec.Command("ip", "addr", "add", ip.String()+"/24", "dev", iface.Name)
 	return cmd.Run()
 }
 
@@ -44,7 +45,8 @@ func DelIpFromInterface(ip net.IP, iface *net.Interface) error {
 	}
 	for _, addr := range existAddr {
 		if ip.Equal(addr.(*net.IPNet).IP) {
-			cmd := exec.Command("ip", "addr", "del", ip.String(), "dev", iface.Name)
+			//TODO: custom netmask
+			cmd := exec.Command("ip", "addr", "del", ip.String()+"/24", "dev", iface.Name)
 			return cmd.Run()
 		}
 	}
@@ -61,7 +63,7 @@ func DelAddrFromInterface(addr net.Addr, iface *net.Interface) error {
 	}
 	for _, existAddr := range existAddrs {
 		if existAddr.String() == addr.String() {
-			cmd := exec.Command("ip", "addr", "del", addr.String(), "dev", iface.Name)
+			cmd := exec.Command("ip", "addr", "del", addr.String()+"/24", "dev", iface.Name)
 			return cmd.Run()
 		}
 	}

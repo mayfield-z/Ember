@@ -1,7 +1,7 @@
 package message
 
 import (
-	"github.com/free5gc/aper"
+	"github.com/mayfield-z/ember/internal/pkg/aper"
 	"github.com/mayfield-z/ember/internal/pkg/utils"
 	"time"
 )

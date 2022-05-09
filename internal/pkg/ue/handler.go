@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"github.com/free5gc/UeauCommon"
 	"github.com/free5gc/milenage"
-	"github.com/free5gc/nas"
-	"github.com/free5gc/nas/security"
 	"github.com/mayfield-z/ember/internal/pkg/message"
 	"github.com/mayfield-z/ember/internal/pkg/mqueue"
+	"github.com/mayfield-z/ember/internal/pkg/nas"
+	"github.com/mayfield-z/ember/internal/pkg/nas/security"
 	"reflect"
 	"regexp"
 )
@@ -18,10 +18,14 @@ func (u *UE) messageHandler() {
 	for {
 		select {
 		case <-u.ctx.Done():
+			u.cleanChannel()
 			return
 		default:
 			c := u.getMessageChan()
 			select {
+			case <-u.ctx.Done():
+				u.cleanChannel()
+				return
 			case msg := <-c:
 				switch msg.(type) {
 				case message.RRCSetup:
